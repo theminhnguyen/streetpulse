@@ -1,0 +1,121 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fenster-Watch – Was passiert vor deinem Fenster?</title>
+<meta name="description" content="Zählt per Webcam Autos, Fußgänger, Fahrräder, Roller, Hunde & Co. – komplett lokal im Browser." />
+
+<!-- TensorFlow.js + COCO-SSD Objekterkennung (läuft lokal im Browser) -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+<link rel="stylesheet" href="css/style.css" />
+
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">🪟</span>
+      <div>
+        <h1>Fenster-Watch</h1>
+        <p class="tagline">Was passiert gerade vor deinem Fenster?</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="privacy-badge" title="Es werden keine Bilder oder Daten hochgeladen. Die KI läuft komplett in deinem Browser.">
+        🔒 100&nbsp;% lokal – nichts wird hochgeladen
+      </span>
+      <span id="status" class="status status--idle">Bereit</span>
+    </div>
+  </header>
+
+  <!-- Steuerleiste -->
+  <section class="controls">
+    <div class="control-group">
+      <button id="btnCamera" class="btn btn--primary">📷 Kamera starten</button>
+      <button id="btnPause" class="btn" disabled>⏸ Pause</button>
+      <select id="cameraSelect" class="select" title="Kamera auswählen" hidden></select>
+    </div>
+
+    <div class="control-group">
+      <label class="file-btn">
+        🎞 Video laden
+        <input id="videoFile" type="file" accept="video/*" hidden />
+      </label>
+      <button id="btnReset" class="btn">↺ Zähler zurücksetzen</button>
+      <button id="btnExport" class="btn">⬇ CSV-Export</button>
+    </div>
+
+    <div class="control-group control-group--sliders">
+      <label class="slider">
+        <span>Erkennungs-Empfindlichkeit <b id="confVal">50&nbsp;%</b></span>
+        <input id="confSlider" type="range" min="20" max="90" value="50" />
+      </label>
+      <label class="slider">
+        <span>Straßenbreite im Bild <b id="calibVal">15&nbsp;m</b></span>
+        <input id="calibSlider" type="range" min="3" max="60" value="15" />
+      </label>
+    </div>
+  </section>
+
+  <main class="grid">
+    <!-- Kamerabild + Erkennungs-Overlay -->
+    <div class="panel panel--video">
+      <div class="video-wrap">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div id="videoHint" class="video-hint">
+          <div class="video-hint-inner">
+            <div class="video-hint-icon">📷</div>
+            <p><strong>Kamera starten</strong> oder ein <strong>Video laden</strong>,<br />um die Beobachtung zu beginnen.</p>
+            <p class="video-hint-sub">Tipp: Richte die Kamera auf die Straße vor deinem Fenster.</p>
+          </div>
+        </div>
+      </div>
+      <div class="video-meta">
+        <span id="fpsMeter" class="chip">– FPS</span>
+        <span id="objMeter" class="chip">0 Objekte im Bild</span>
+        <span id="runtimeMeter" class="chip">Laufzeit 00:00</span>
+      </div>
+    </div>
+
+    <!-- Statistik-Kacheln -->
+    <div class="panel panel--stats">
+      <h2>Beobachtungen</h2>
+      <div id="statGrid" class="stat-grid"><!-- per JS gefüllt --></div>
+      <p class="stats-note">
+        <b>Jetzt</b> = aktuell im Bild &nbsp;·&nbsp; <b>Gesamt</b> = seit Start eindeutig gezählt
+      </p>
+    </div>
+  </main>
+
+  <section class="grid grid--bottom">
+    <!-- Verlaufs-Diagramm -->
+    <div class="panel panel--chart">
+      <h2>Verlauf <span class="subtle">(letzte 60&nbsp;Sekunden – Objekte im Bild)</span></h2>
+      <canvas id="chart"></canvas>
+      <div id="chartLegend" class="chart-legend"></div>
+    </div>
+
+    <!-- Ereignis-Log -->
+    <div class="panel panel--log">
+      <h2>Ereignis-Log</h2>
+      <ul id="log" class="log"></ul>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <details>
+      <summary>ℹ️ Wie genau ist das? (bitte lesen)</summary>
+      <div class="footer-body">
+        <ul>
+          <li><b>Objekterkennung:</b> Nutzt das KI-Modell <i>COCO-SSD</i>. Es erkennt u.&nbsp;a. Personen, Autos, LKW, Busse, Fahrräder, Motorräder/Motorroller, Hunde und Katzen recht zuverlässig – abhängig von Licht, Abstand und Kamerawinkel.</li>
+          <li><b>Tretroller / E-Scooter:</b> Das Modell kennt keine eigene Klasse dafür. Sie werden meist als <i>Person</i> oder gar nicht erkannt. Motor<b>roller</b> laufen unter „Motorrad".</li>
+          <li><b>Geschwindigkeit:</b> Nur eine <b>grobe Schätzung</b>. Sie misst, wie schnell sich ein Objekt über das Bild bewegt, und rechnet das mit deiner „Straßenbreite im Bild"-Angabe in km/h um. Perspektive und Kamerawinkel verfälschen das – für einen exakten Wert bräuchte es eine echte Kalibrierung.</li>
+          <li><b>Gesamt-Zählung:</b> Beruht auf einfachem Objekt-Tracking. Bei dichtem Verkehr oder Verdeckungen kann es doppelt zählen oder etwas übersehen.</li>
+          <li><b>Datenschutz:</b> Das Video verlässt niemals deinen Rechner. Es gibt keinen Server – alles passiert im Browser.</li>
+        </ul>
+      </div>
+    </details>
+    <p class="footer-credit">Fenster-Watch · Proof of Concept · läuft offline im Browser</p>
+  </footer>
+</div>
+
+<script type="module" src="js/app.js"></script>
