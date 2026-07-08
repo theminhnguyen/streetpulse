@@ -334,6 +334,19 @@ html, body {
 
 /* ---------- Chart ---------- */
 .panel--chart canvas { width: 100%; height: 220px; display: block; }
+.panel--daychart { margin-top: 18px; }
+.panel--daychart canvas { width: 100%; height: 190px; display: block; }
+.link-btn {
+  float: right;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.link-btn:hover { color: var(--danger); }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); }
 .legend-dot { width: 10px; height: 10px; border-radius: 3px; }
@@ -375,6 +388,31 @@ html, body {
 .footer-body ul { margin: 4px 0 16px; padding-left: 18px; line-height: 1.6; font-size: 13.5px; }
 .footer-body li { margin-bottom: 8px; }
 .footer-credit { text-align: center; color: var(--text-faint); font-size: 12.5px; margin-top: 16px; }
+
+/* ---------- Alarm ---------- */
+.panel-hint { color: var(--text-dim); font-size: 13px; margin: -6px 0 14px; }
+.alarm-block { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin-bottom: 14px; }
+.alarm-block--toggles { margin-bottom: 0; gap: 18px; }
+.alarm-label { font-size: 13px; color: var(--text-dim); width: 100%; margin-bottom: 2px; }
+.alarm-cats { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.alarm-cat, .alarm-check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text); cursor: pointer; user-select: none;
+}
+.alarm-cat input, .alarm-check input { accent-color: var(--accent); cursor: pointer; }
+.num-input {
+  width: 62px; border: 1px solid var(--border); background: var(--panel-2);
+  color: var(--text); padding: 6px 8px; border-radius: 8px; font-size: 13px;
+}
+.alarm-unit { font-size: 13px; color: var(--text-dim); }
+
+/* ---------- Galerie ---------- */
+.panel--gallery { max-height: 340px; overflow-y: auto; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+.gallery-empty { color: var(--text-faint); font-size: 13px; font-style: italic; grid-column: 1 / -1; margin: 4px 0; line-height: 1.5; }
+.snap { display: block; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); aspect-ratio: 16 / 9; }
+.snap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.snap:hover { border-color: var(--accent); }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {

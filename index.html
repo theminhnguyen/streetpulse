@@ -121,6 +121,46 @@
     </div>
   </section>
 
+  <!-- Tagesverlauf (persistent – überlebt das Neuladen) -->
+  <section class="panel panel--daychart">
+    <h2>Tagesverlauf
+      <span class="subtle">(heute, Erkennungen pro Stunde)</span>
+      <button id="btnDayClear" class="link-btn" title="Heute gespeicherte Daten löschen">löschen</button>
+    </h2>
+    <canvas id="dayChart"></canvas>
+    <div id="dayLegend" class="chart-legend"></div>
+  </section>
+
+  <!-- Alarm & Schnappschüsse -->
+  <section class="grid grid--bottom">
+    <div class="panel panel--alarm">
+      <h2>🔔 Alarm</h2>
+      <p class="panel-hint">Ton-Signal – und optional ein Foto – wenn etwas Bestimmtes auftaucht.</p>
+      <div class="alarm-block">
+        <span class="alarm-label">Alarm bei diesen Objekten:</span>
+        <div id="alarmCats" class="alarm-cats"><!-- per JS --></div>
+      </div>
+      <div class="alarm-block">
+        <label class="alarm-check">
+          <input type="checkbox" id="alarmSpeedOn" /> Fahrzeug schneller als
+        </label>
+        <input type="number" id="alarmSpeedVal" class="num-input" value="50" min="5" max="200" />
+        <span class="alarm-unit">km/h</span>
+      </div>
+      <div class="alarm-block alarm-block--toggles">
+        <label class="alarm-check"><input type="checkbox" id="alarmSound" checked /> 🔊 Ton abspielen</label>
+        <label class="alarm-check"><input type="checkbox" id="alarmSnap" checked /> 📸 Foto speichern</label>
+      </div>
+    </div>
+
+    <div class="panel panel--gallery">
+      <h2>📸 Schnappschüsse <span class="subtle" id="galleryCount"></span></h2>
+      <div id="gallery" class="gallery">
+        <p class="gallery-empty">Noch keine Aufnahmen. Bei einem Alarm wird automatisch ein Foto gespeichert (bleibt nur in dieser Sitzung).</p>
+      </div>
+    </div>
+  </section>
+
   <footer class="footer">
     <details>
       <summary>ℹ️ Wie genau ist das? (bitte lesen)</summary>

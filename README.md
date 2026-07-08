@@ -11,12 +11,16 @@ Motorräder/Roller, Busse, LKW, Hunde und Katzen** – inklusive einer groben
 ## ✨ Funktionen
 
 - **Live-Objekterkennung** per Webcam (oder aus einer geladenen Video-Datei)
-- **Zählung** pro Kategorie: „jetzt im Bild" und „gesamt seit Start"
-- **Geschwindigkeits­schätzung** bewegter Fahrzeuge (grob, mit Kalibrierung)
-- **Verlaufs-Diagramm** der letzten 60 Sekunden
-- **Ereignis-Log** und **CSV-Export** der Beobachtungen
+- **Zählung** pro Kategorie: „jetzt im Bild" und „heute gesamt" – bleibt nach dem Neuladen erhalten
+- **Zähllinie mit Richtung**: zählt Objekte beim Überqueren, getrennt nach Fahrtrichtung
+- **Beobachtungs-Zone**: nur einen gewählten Bildbereich auswerten (z. B. nur die Straße)
+- **Geschwindigkeits­schätzung** bewegter Fahrzeuge (grob) – mit **Maßstab direkt im Bild**
+- **Verlaufs-Diagramm** (letzte 60 s) und **Tagesverlauf** (pro Stunde, gespeichert)
+- **Alarm** bei bestimmten Objekten oder ab einem Tempo – mit Ton und automatischem **Schnappschuss**
+- **Genauigkeits-Umschalter** (schnelles oder genaueres Erkennungsmodell)
+- **Ereignis-Log** und **CSV-Export** (inklusive Richtung)
 - **Automatische Pause**, wenn der Browser-Tab in den Hintergrund wechselt
-- Erkennungs-Empfindlichkeit und Kalibrierung per Schieberegler einstellbar
+- Einstellungen, Zone/Linie und Tageszählung werden lokal gespeichert (localStorage)
 
 ## 🚀 Nutzung
 
@@ -25,7 +29,13 @@ Motorräder/Roller, Busse, LKW, Hunde und Katzen** – inklusive einer groben
    - Alternativ **„Video laden"** und eine Videodatei mit Straßenverkehr wählen.
 3. Kamera auf die Straße richten. Die Zählung beginnt automatisch.
 4. Für bessere Geschwindigkeits­werte: Schieberegler **„Straßenbreite im Bild"**
-   ungefähr auf die real sichtbare Breite (in Metern) einstellen.
+   ungefähr auf die real sichtbare Breite (in Metern) einstellen – der Maßstab
+   dazu wird direkt im Kamerabild angezeigt.
+5. Optionale Werkzeuge über dem Bild:
+   - **▦ Zone** ziehen, um nur einen Bereich auszuwerten.
+   - **╱ Zähllinie** über die Straße ziehen, um Überquerungen nach Richtung zu zählen.
+   - **🔔 Alarm** einstellen, um bei bestimmten Objekten oder ab einem Tempo ein
+     Ton-Signal und einen Schnappschuss auszulösen.
 
 > Der Kamerazugriff im Browser funktioniert nur über **HTTPS** (oder `localhost`).
 > Bei GitHub Pages ist HTTPS automatisch gegeben.

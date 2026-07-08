@@ -33,6 +33,8 @@ const overlay = $("overlay");
 const octx = overlay.getContext("2d");
 const chartCanvas = $("chart");
 const cctx = chartCanvas.getContext("2d");
+const dayCanvas = $("dayChart");
+const dctx = dayCanvas.getContext("2d");
 const els = {
   status: $("status"), btnCamera: $("btnCamera"), btnPause: $("btnPause"),
   cameraSelect: $("cameraSelect"), videoFile: $("videoFile"), btnReset: $("btnReset"),
@@ -45,6 +47,10 @@ const els = {
   btnLine: $("btnLine"), btnLineClear: $("btnLineClear"), toolHint: $("toolHint"),
   dirBar: $("dirBar"), dirA: $("dirA"), dirB: $("dirB"),
   dirAArrow: $("dirAArrow"), dirBArrow: $("dirBArrow"),
+  dayLegend: $("dayLegend"), btnDayClear: $("btnDayClear"),
+  alarmCats: $("alarmCats"), alarmSpeedOn: $("alarmSpeedOn"), alarmSpeedVal: $("alarmSpeedVal"),
+  alarmSound: $("alarmSound"), alarmSnap: $("alarmSnap"),
+  gallery: $("gallery"), galleryCount: $("galleryCount"),
 };
 
 /* ---- 4. Zustand ------------------------------------------------------- */
@@ -77,6 +83,33 @@ let dirTotals = { a: {}, b: {} };
 // Maßstab (Kalibrierung) im Bild: nach dem Verstellen kurz hervorheben
 let calibShowUntil = 0;
 let calibHideTimer = null;
+
+/* ---- Tages-Statistik (persistent, überlebt Reload) ------------------- */
+function dateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function freshDay(date) {
+  return { date, hourly: Array.from({ length: 24 }, () => ({})), totals: {} };
+}
+function loadDay() {
+  const today = dateStr(new Date());
+  const saved = storage.get("day", null);
+  if (saved && saved.date === today && Array.isArray(saved.hourly) && saved.hourly.length === 24) return saved;
+  return freshDay(today);
+}
+let day = loadDay();
+let daySaveTimer = null;
+
+function scheduleDaySave() {
+  clearTimeout(daySaveTimer);
+  daySaveTimer = setTimeout(() => storage.set("day", day), 1500);
+}
+function addToDay(key) {
+  if (day.date !== dateStr(new Date())) day = freshDay(dateStr(new Date())); // Tageswechsel
+  day.hourly[new Date().getHours()][key] = (day.hourly[new Date().getHours()][key] || 0) + 1;
+  day.totals[key] = (day.totals[key] || 0) + 1;
+  scheduleDaySave();
+}
 
 const tracker = new ObjectTracker({
   confirmHits: 2,
@@ -563,6 +596,7 @@ function onNewObject(track) {
 // Zentrale Zählstelle: kumulativ + optional Richtung + Log.
 function registerCount(key, speed, direction) {
   totals[key] = (totals[key] || 0) + 1;
+  addToDay(key);
   if (direction === "a") dirTotals.a[key] = (dirTotals.a[key] || 0) + 1;
   else if (direction === "b") dirTotals.b[key] = (dirTotals.b[key] || 0) + 1;
 
@@ -571,6 +605,8 @@ function registerCount(key, speed, direction) {
   if (logRows.length > MAX_LOG_ROWS) logRows.shift();
   addLogEntry(CATEGORIES[key], speed, direction);
   if (direction) updateDirectionBar();
+  drawDayChart();
+  checkAlarm(key, speed);
 }
 
 function addLogEntry(cat, speed, direction) {
@@ -631,6 +667,94 @@ function updateDirectionBar() {
   const arr = directionArrows();
   els.dirAArrow.textContent = arr.a;
   els.dirBArrow.textContent = arr.b;
+}
+
+/* ---- 10c. Alarm & Schnappschüsse ------------------------------------ */
+const MAX_SNAPSHOTS = 12;
+function loadAlarm() {
+  return Object.assign(
+    { cats: [], speedOn: false, speedVal: 50, sound: true, snap: true },
+    storage.get("alarm", {})
+  );
+}
+let alarmSettings = loadAlarm();
+const snapshots = [];    // {dataUrl, label} – nur in dieser Sitzung
+let audioCtx = null;
+
+function saveAlarm() { storage.set("alarm", alarmSettings); }
+
+function buildAlarmCategories() {
+  els.alarmCats.innerHTML = CATEGORY_KEYS.map((k) =>
+    `<label class="alarm-cat"><input type="checkbox" data-cat="${k}"${alarmSettings.cats.includes(k) ? " checked" : ""} /> ${CATEGORIES[k].emoji} ${CATEGORIES[k].singular}</label>`
+  ).join("");
+  els.alarmCats.querySelectorAll("input").forEach((inp) => {
+    inp.addEventListener("change", () => {
+      const k = inp.dataset.cat;
+      if (inp.checked) { if (!alarmSettings.cats.includes(k)) alarmSettings.cats.push(k); }
+      else alarmSettings.cats = alarmSettings.cats.filter((c) => c !== k);
+      saveAlarm();
+    });
+  });
+}
+
+// Wird nach jeder Zählung aufgerufen.
+function checkAlarm(key, speed) {
+  const s = alarmSettings;
+  const catHit = s.cats.includes(key);
+  const speedHit = s.speedOn && speed != null && speed >= s.speedVal;
+  if (!catHit && !speedHit) return;
+  if (s.sound) playBeep();
+  if (s.snap) captureSnapshot(key, speed);
+}
+
+function playBeep() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, t);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t); osc.stop(t + 0.36);
+  } catch { /* Audio nicht verfügbar */ }
+}
+
+function captureSnapshot(key, speed) {
+  if (!video.videoWidth) return;
+  const c = document.createElement("canvas");
+  c.width = video.videoWidth;
+  c.height = video.videoHeight;
+  const cx = c.getContext("2d");
+  cx.drawImage(video, 0, 0, c.width, c.height);
+  const cat = CATEGORIES[key];
+  const text = `${cat.emoji} ${cat.singular}${speed ? " ~" + speed + " km/h" : ""} · ${new Date().toLocaleTimeString("de-DE")}`;
+  const barH = 30;
+  cx.fillStyle = "rgba(0,0,0,0.6)";
+  cx.fillRect(0, c.height - barH, c.width, barH);
+  cx.fillStyle = "#fff";
+  cx.font = "600 20px -apple-system, system-ui, sans-serif";
+  cx.textBaseline = "middle";
+  cx.fillText(text, 10, c.height - barH / 2);
+  snapshots.unshift({ dataUrl: c.toDataURL("image/jpeg", 0.7), label: text });
+  if (snapshots.length > MAX_SNAPSHOTS) snapshots.pop();
+  renderGallery();
+}
+
+function renderGallery() {
+  if (!snapshots.length) {
+    els.gallery.innerHTML = `<p class="gallery-empty">Noch keine Aufnahmen. Bei einem Alarm wird automatisch ein Foto gespeichert (bleibt nur in dieser Sitzung).</p>`;
+    els.galleryCount.textContent = "";
+    return;
+  }
+  els.galleryCount.textContent = `(${snapshots.length})`;
+  els.gallery.innerHTML = snapshots.map((s, i) =>
+    `<a class="snap" href="${s.dataUrl}" download="fenster-watch-foto-${i + 1}.jpg" title="${s.label} – klicken zum Speichern"><img src="${s.dataUrl}" alt="${s.label}" /></a>`
+  ).join("");
 }
 
 /* ---- 11. Verlaufs-Diagramm ------------------------------------------- */
@@ -710,6 +834,74 @@ function renderLegend(activeKeys) {
     : `<span class="subtle">Noch keine Daten – Beobachtung starten.</span>`;
 }
 
+/* ---- 11b. Tagesverlauf-Diagramm (gestapelte Stundenbalken) ----------- */
+function drawDayChart() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = dayCanvas.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  dayCanvas.width = Math.round(w * dpr);
+  dayCanvas.height = Math.round(h * dpr);
+  dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  dctx.clearRect(0, 0, w, h);
+
+  const padL = 26, padR = 8, padT = 10, padB = 20;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+
+  const activeKeys = CATEGORY_KEYS.filter((k) => day.hourly.some((hr) => hr[k] > 0));
+  let maxVal = 1;
+  for (const hr of day.hourly) {
+    maxVal = Math.max(maxVal, CATEGORY_KEYS.reduce((s, k) => s + (hr[k] || 0), 0));
+  }
+  maxVal = Math.ceil(maxVal);
+
+  // Gitter + Y-Achse
+  dctx.strokeStyle = "#2b3444";
+  dctx.fillStyle = "#64748b";
+  dctx.font = "11px -apple-system, system-ui, sans-serif";
+  dctx.textBaseline = "middle";
+  dctx.lineWidth = 1;
+  for (let i = 0; i <= 2; i++) {
+    const val = Math.round((maxVal / 2) * i);
+    const y = padT + plotH - (val / maxVal) * plotH;
+    dctx.beginPath(); dctx.moveTo(padL, y); dctx.lineTo(padL + plotW, y); dctx.stroke();
+    dctx.fillText(String(val), 3, y);
+  }
+
+  // gestapelte Balken je Stunde
+  const bw = plotW / 24;
+  for (let hr = 0; hr < 24; hr++) {
+    let yBase = padT + plotH;
+    const x = padL + hr * bw;
+    for (const k of CATEGORY_KEYS) {
+      const v = day.hourly[hr][k] || 0;
+      if (!v) continue;
+      const segH = (v / maxVal) * plotH;
+      dctx.fillStyle = CATEGORIES[k].color;
+      dctx.fillRect(x + 1, yBase - segH, Math.max(1, bw - 2), segH);
+      yBase -= segH;
+    }
+  }
+
+  // X-Achse (Stunden)
+  dctx.fillStyle = "#64748b";
+  dctx.textBaseline = "alphabetic";
+  dctx.textAlign = "center";
+  for (let hr = 0; hr <= 24; hr += 6) {
+    dctx.fillText(hr + "h", padL + hr * bw, h - 6);
+  }
+  dctx.textAlign = "left";
+
+  renderDayLegend(activeKeys);
+}
+
+function renderDayLegend(activeKeys) {
+  els.dayLegend.innerHTML = activeKeys.length
+    ? activeKeys.map((k) =>
+        `<span class="legend-item"><span class="legend-dot" style="background:${CATEGORIES[k].color}"></span>${CATEGORIES[k].label}</span>`
+      ).join("")
+    : `<span class="subtle">Heute noch keine Daten aufgezeichnet.</span>`;
+}
+
 /* ---- 12. CSV-Export --------------------------------------------------- */
 function exportCsv() {
   const lines = [];
@@ -767,12 +959,15 @@ function resetCounts() {
   tracker.reset();
   dirTotals = { a: {}, b: {} };
   resetLineSides();
+  day = freshDay(dateStr(new Date())); // heutige gespeicherte Statistik verwerfen
+  storage.set("day", day);
   obsAccumMs = 0;
   obsStart = (running && !paused) ? performance.now() : 0;
   els.log.innerHTML = `<li class="log-empty">Noch keine Ereignisse …</li>`;
   updateStats([]);
   updateDirectionBar();
   drawChart();
+  drawDayChart();
 }
 
 function setStatus(text, kind) {
@@ -798,6 +993,13 @@ function bindEvents() {
   els.btnReset.addEventListener("click", resetCounts);
   els.btnExport.addEventListener("click", exportCsv);
   els.modelSelect.addEventListener("change", (e) => switchModel(e.target.value));
+  els.btnDayClear.addEventListener("click", resetCounts);
+
+  // Alarm-Einstellungen
+  els.alarmSpeedOn.addEventListener("change", () => { alarmSettings.speedOn = els.alarmSpeedOn.checked; saveAlarm(); });
+  els.alarmSpeedVal.addEventListener("change", () => { alarmSettings.speedVal = Number(els.alarmSpeedVal.value) || 50; saveAlarm(); });
+  els.alarmSound.addEventListener("change", () => { alarmSettings.sound = els.alarmSound.checked; saveAlarm(); });
+  els.alarmSnap.addEventListener("change", () => { alarmSettings.snap = els.alarmSnap.checked; saveAlarm(); });
 
   // Zone & Zähllinie
   els.btnZone.addEventListener("click", () => setEditMode(editMode === "zone" ? null : "zone"));
@@ -842,8 +1044,21 @@ function init() {
   buildStatCards();
   bindEvents();
   els.modelSelect.value = modelBase;
-  resetCounts(); // setzt Zähler/Log/Diagramm auf den Startzustand
-  updateToolButtons(); // gespeicherte Zone/Linie in den Buttons spiegeln
+  // Alarm-Einstellungen in die UI übernehmen
+  buildAlarmCategories();
+  els.alarmSpeedOn.checked = alarmSettings.speedOn;
+  els.alarmSpeedVal.value = alarmSettings.speedVal;
+  els.alarmSound.checked = alarmSettings.sound;
+  els.alarmSnap.checked = alarmSettings.snap;
+  // heutige, gespeicherte Zählung in die Anzeige übernehmen (überlebt Reload)
+  for (const k of CATEGORY_KEYS) totals[k] = day.totals[k] || 0;
+  els.log.innerHTML = `<li class="log-empty">Noch keine Ereignisse …</li>`;
+  updateStats([]);
+  updateDirectionBar();
+  updateToolButtons();       // gespeicherte Zone/Linie in den Buttons spiegeln
+  renderGallery();
+  drawChart();
+  drawDayChart();
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
   loadModel();
