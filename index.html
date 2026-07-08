@@ -51,6 +51,16 @@
       <button id="btnReport" class="btn">📄 Report</button>
     </div>
 
+    <div class="control-group">
+      <label class="alarm-check" title="Startet und stoppt die Zählung automatisch im gewählten Zeitfenster (App muss geöffnet bleiben)">
+        <input type="checkbox" id="schedOn" /> ⏰ Auto-Aufnahme
+      </label>
+      <input type="time" id="schedFrom" class="time-input" value="08:00" />
+      <span class="time-dash">–</span>
+      <input type="time" id="schedTo" class="time-input" value="09:00" />
+      <span id="schedStatus" class="sched-status"></span>
+    </div>
+
     <div class="control-group control-group--sliders">
       <label class="slider">
         <span>Erkennungs-Empfindlichkeit <b id="confVal">50&nbsp;%</b></span>
@@ -178,7 +188,14 @@
       <div class="alarm-block alarm-block--toggles">
         <label class="alarm-check"><input type="checkbox" id="alarmSound" checked /> 🔊 Ton abspielen</label>
         <label class="alarm-check"><input type="checkbox" id="alarmSnap" checked /> 📸 Foto speichern</label>
+        <label class="alarm-check"><input type="checkbox" id="alarmNotify" /> 🔔 Benachrichtigung</label>
       </div>
+      <div class="alarm-block">
+        <label class="alarm-check" title="Überwacht weiter, auch wenn der Tab im Hintergrund ist (mehr CPU/Akku)">
+          <input type="checkbox" id="alarmBackground" /> 👁 Im Hintergrund weiter überwachen
+        </label>
+      </div>
+      <p class="panel-hint" id="notifyHint" style="margin-top:6px"></p>
     </div>
 
     <div class="panel panel--gallery">

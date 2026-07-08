@@ -59,6 +59,8 @@ const els = {
   weekLegend: $("weekLegend"), speedLimit: $("speedLimit"), spdHint: $("spdHint"),
   spdCount: $("spdCount"), spdAvg: $("spdAvg"), spdP85: $("spdP85"),
   spdMax: $("spdMax"), spdOver: $("spdOver"),
+  alarmNotify: $("alarmNotify"), alarmBackground: $("alarmBackground"), notifyHint: $("notifyHint"),
+  schedOn: $("schedOn"), schedFrom: $("schedFrom"), schedTo: $("schedTo"), schedStatus: $("schedStatus"),
 };
 
 /* ---- 4. Zustand ------------------------------------------------------- */
@@ -265,7 +267,7 @@ function onSourceReady() {
   els.btnPause.textContent = "⏸ Pause";
   if (!obsStart) obsStart = performance.now();
   setStatus("Live – Beobachtung läuft", "live");
-  if (!running) { running = true; requestAnimationFrame(detectLoop); }
+  if (!running) { running = true; scheduleNextDetect(); }
 }
 
 function stopStream() {
@@ -312,7 +314,13 @@ async function detectLoop() {
     }
     processDetections(predictions, now, dt);
   }
-  requestAnimationFrame(detectLoop);
+  scheduleNextDetect();
+}
+
+// setTimeout statt rAF: läuft (gedrosselt) auch im Hintergrund-Tab weiter,
+// nötig für die optionale Hintergrund-Überwachung. rAF pausiert dort komplett.
+function scheduleNextDetect() {
+  setTimeout(detectLoop, document.hidden ? 250 : 30);
 }
 
 function processDetections(predictions, now, dt) {
@@ -763,7 +771,7 @@ function updateDirectionBar() {
 const MAX_SNAPSHOTS = 12;
 function loadAlarm() {
   return Object.assign(
-    { cats: [], speedOn: false, speedVal: 50, sound: true, snap: true },
+    { cats: [], speedOn: false, speedVal: 50, sound: true, snap: true, notify: false, background: false },
     storage.get("alarm", {})
   );
 }
@@ -795,6 +803,60 @@ function checkAlarm(key, speed) {
   if (!catHit && !speedHit) return;
   if (s.sound) playBeep();
   if (s.snap) captureSnapshot(key, speed);
+  if (s.notify) sendNotification(key, speed);
+}
+
+let lastNotifyTs = 0;
+function sendNotification(key, speed) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const now = Date.now();
+  if (now - lastNotifyTs < 8000) return; // nicht spammen: max 1 alle 8 s
+  lastNotifyTs = now;
+  const cat = CATEGORIES[key];
+  try {
+    new Notification("StreetPulse", {
+      body: `${cat.emoji} ${cat.singular} erkannt${speed ? " · ~" + speed + " km/h" : ""}`,
+      tag: "streetpulse-alarm",
+    });
+  } catch { /* z.B. auf iOS ohne Support */ }
+}
+
+function updateNotifyHint() {
+  if (!alarmSettings.notify) { els.notifyHint.textContent = ""; return; }
+  if (!("Notification" in window)) { els.notifyHint.textContent = "Dieser Browser unterstützt keine Benachrichtigungen."; return; }
+  const p = Notification.permission;
+  els.notifyHint.textContent = p === "granted" ? "✓ Benachrichtigungen erlaubt."
+    : p === "denied" ? "⚠ Im Browser blockiert – in den Seiteneinstellungen erlauben."
+    : "Bitte im Browser-Dialog erlauben.";
+}
+
+/* ---- 10d. Zeitgesteuerte Aufnahme ----------------------------------- */
+let schedule = storage.get("schedule", { on: false, from: "08:00", to: "09:00" });
+let schedulePaused = false;
+function saveSchedule() { storage.set("schedule", schedule); }
+function nowHHMM() {
+  const n = new Date();
+  return String(n.getHours()).padStart(2, "0") + ":" + String(n.getMinutes()).padStart(2, "0");
+}
+function withinWindow(cur, from, to) {
+  return from <= to ? (cur >= from && cur < to) : (cur >= from || cur < to); // auch über Mitternacht
+}
+function updateSchedStatus() {
+  if (!schedule.on) { els.schedStatus.textContent = ""; return; }
+  els.schedStatus.textContent = withinWindow(nowHHMM(), schedule.from, schedule.to)
+    ? "● läuft" : "wartet auf " + schedule.from;
+}
+// Alle 15 s geprüft: startet/pausiert die Aufnahme im gewählten Zeitfenster.
+function checkSchedule() {
+  updateSchedStatus();
+  if (!schedule.on || !model) return;
+  const inWin = withinWindow(nowHHMM(), schedule.from, schedule.to);
+  if (inWin) {
+    if (!running) startCamera();                            // Fenster beginnt -> Kamera starten
+    else if (paused && schedulePaused) { schedulePaused = false; setPaused(false); }
+  } else if (running && !paused) {
+    schedulePaused = true; setPaused(true);                 // Fenster vorbei -> pausieren
+  }
 }
 
 function playBeep() {
@@ -1312,6 +1374,21 @@ function bindEvents() {
   els.alarmSpeedVal.addEventListener("change", () => { alarmSettings.speedVal = Number(els.alarmSpeedVal.value) || 50; saveAlarm(); });
   els.alarmSound.addEventListener("change", () => { alarmSettings.sound = els.alarmSound.checked; saveAlarm(); });
   els.alarmSnap.addEventListener("change", () => { alarmSettings.snap = els.alarmSnap.checked; saveAlarm(); });
+  els.alarmNotify.addEventListener("change", () => {
+    alarmSettings.notify = els.alarmNotify.checked;
+    saveAlarm();
+    if (alarmSettings.notify && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().then(updateNotifyHint);
+    }
+    updateNotifyHint();
+  });
+  els.alarmBackground.addEventListener("change", () => {
+    alarmSettings.background = els.alarmBackground.checked; saveAlarm();
+  });
+  // Zeitgesteuerte Aufnahme
+  els.schedOn.addEventListener("change", () => { schedule.on = els.schedOn.checked; saveSchedule(); checkSchedule(); });
+  els.schedFrom.addEventListener("change", () => { schedule.from = els.schedFrom.value || "08:00"; saveSchedule(); checkSchedule(); });
+  els.schedTo.addEventListener("change", () => { schedule.to = els.schedTo.value || "09:00"; saveSchedule(); checkSchedule(); });
 
   // Zone & Zähllinie
   els.btnZone.addEventListener("click", () => setEditMode(editMode === "zone" ? null : "zone"));
@@ -1349,6 +1426,11 @@ function bindEvents() {
   // also automatisch pausieren, damit Uhr & Diagramm nicht verfälscht werden.
   document.addEventListener("visibilitychange", () => {
     if (!running) return;
+    // Hintergrund-Überwachung aktiv? Dann weiterlaufen lassen (Loop tickt via setTimeout).
+    if (alarmSettings.background) {
+      if (document.hidden && paused && autoPaused) { autoPaused = false; setPaused(false); }
+      return;
+    }
     if (document.hidden && !paused) { autoPaused = true; setPaused(true); }
     else if (!document.hidden && autoPaused) { autoPaused = false; setPaused(false); }
   });
@@ -1367,6 +1449,14 @@ function init() {
   els.alarmSpeedVal.value = alarmSettings.speedVal;
   els.alarmSound.checked = alarmSettings.sound;
   els.alarmSnap.checked = alarmSettings.snap;
+  els.alarmNotify.checked = alarmSettings.notify;
+  els.alarmBackground.checked = alarmSettings.background;
+  updateNotifyHint();
+  // Zeitplan-Einstellungen übernehmen
+  els.schedOn.checked = schedule.on;
+  els.schedFrom.value = schedule.from;
+  els.schedTo.value = schedule.to;
+  updateSchedStatus();
   // heutige, gespeicherte Zählung in die Anzeige übernehmen (überlebt Reload)
   const dToday = currentDay();
   for (const k of CATEGORY_KEYS) totals[k] = dToday.totals[k] || 0;
@@ -1381,6 +1471,7 @@ function init() {
   drawSpeedStats();
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
+  setInterval(checkSchedule, 15000);
   loadModel();
 }
 

@@ -43,6 +43,7 @@ export class ObjectTracker {
   reset() {
     this.tracks.clear();
     this.nextId = 1;
+    this._lastUpdate = 0;
   }
 
   /** Zentrum einer Bounding-Box [x, y, w, h]. */
@@ -60,12 +61,18 @@ export class ObjectTracker {
     const unmatched = new Set(this.tracks.keys());
     const pairs = [];
 
+    // Bei niedriger Bildrate (z.B. Hintergrund-Tab) bewegen sich Objekte pro Frame
+    // weiter – Suchradius entsprechend vergrößern, damit Tracks nicht abreißen.
+    const dt = this._lastUpdate ? now - this._lastUpdate : 120;
+    this._lastUpdate = now;
+    const dtFactor = Math.min(4, Math.max(1, dt / 120));
+
     // Alle plausiblen (Detektion, Track)-Paare gleicher Klasse sammeln.
     detections.forEach((det, di) => {
       const c = ObjectTracker._centroid(det.bbox);
       const bboxDiag = Math.hypot(det.bbox[2], det.bbox[3]);
       // Wie weit darf sich ein Objekt zwischen zwei Detektionen bewegt haben?
-      const gate = Math.max(bboxDiag * 1.6, this.frameWidth * 0.15);
+      const gate = Math.max(bboxDiag * 1.6, this.frameWidth * 0.15) * dtFactor;
 
       this.tracks.forEach((t, id) => {
         if (t.class !== det.class) return;
