@@ -14,13 +14,15 @@ Motorräder/Roller, Busse, LKW, Hunde und Katzen** – inklusive einer groben
 - **Zählung** pro Kategorie: „jetzt im Bild" und „heute gesamt" – bleibt nach dem Neuladen erhalten
 - **Zähllinie mit Richtung**: zählt Objekte beim Überqueren, getrennt nach Fahrtrichtung
 - **Beobachtungs-Zone**: nur einen gewählten Bildbereich auswerten (z. B. nur die Straße)
-- **Geschwindigkeits­schätzung** bewegter Fahrzeuge (grob) – mit **Maßstab direkt im Bild**
-- **Verlaufs-Diagramm** (letzte 60 s) und **Tagesverlauf** (pro Stunde, gespeichert)
+- **Geschwindigkeits­schätzung** bewegter Fahrzeuge – grob per Schieberegler **oder präzise per 2-Punkt-Kalibrierung** (Strecke mit bekannter realer Länge), mit **Maßstab direkt im Bild**
+- **Tempo-Statistik**: Durchschnitt, **85 %-Wert** (Standard der Verkehrsplanung), Spitze, Anteil über einem Tempolimit und ein Geschwindigkeits-Histogramm
+- **Verlaufs-Diagramm** (letzte 60 s), **Tagesverlauf** (pro Stunde) und **mehrtägiger Verlauf** (bis zu 14 Tage)
+- **Report als Bild (PNG)** mit allen Kennzahlen und Diagrammen – zum Teilen (z. B. mit Stadt/Nachbarschaft)
 - **Alarm** bei bestimmten Objekten oder ab einem Tempo – mit Ton und automatischem **Schnappschuss**
 - **Genauigkeits-Umschalter** (schnelles oder genaueres Erkennungsmodell)
 - **Ereignis-Log** und **CSV-Export** (inklusive Richtung)
 - **Automatische Pause**, wenn der Browser-Tab in den Hintergrund wechselt
-- Einstellungen, Zone/Linie und Tageszählung werden lokal gespeichert (localStorage)
+- Einstellungen, Zone/Linie/Kalibrierung und mehrtägige Statistik werden lokal gespeichert (localStorage)
 
 ## 🚀 Nutzung
 
@@ -34,8 +36,11 @@ Motorräder/Roller, Busse, LKW, Hunde und Katzen** – inklusive einer groben
 5. Optionale Werkzeuge über dem Bild:
    - **▦ Zone** ziehen, um nur einen Bereich auszuwerten.
    - **╱ Zähllinie** über die Straße ziehen, um Überquerungen nach Richtung zu zählen.
+   - **📏 Kalibrieren** – eine Strecke mit bekannter Länge markieren (z. B. ein
+     geparktes Auto ≈ 4,5 m) für belastbarere km/h-Werte.
    - **🔔 Alarm** einstellen, um bei bestimmten Objekten oder ab einem Tempo ein
      Ton-Signal und einen Schnappschuss auszulösen.
+6. Über **📄 Report** ein teilbares Bild mit allen Zahlen und Diagrammen erzeugen.
 
 > Der Kamerazugriff im Browser funktioniert nur über **HTTPS** (oder `localhost`).
 > Bei GitHub Pages ist HTTPS automatisch gegeben.

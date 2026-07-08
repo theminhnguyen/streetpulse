@@ -35,6 +35,10 @@ const chartCanvas = $("chart");
 const cctx = chartCanvas.getContext("2d");
 const dayCanvas = $("dayChart");
 const dctx = dayCanvas.getContext("2d");
+const speedCanvas = $("speedChart");
+const spctx = speedCanvas.getContext("2d");
+const weekCanvas = $("weekChart");
+const wctx = weekCanvas.getContext("2d");
 const els = {
   status: $("status"), btnCamera: $("btnCamera"), btnPause: $("btnPause"),
   cameraSelect: $("cameraSelect"), videoFile: $("videoFile"), btnReset: $("btnReset"),
@@ -51,6 +55,10 @@ const els = {
   alarmCats: $("alarmCats"), alarmSpeedOn: $("alarmSpeedOn"), alarmSpeedVal: $("alarmSpeedVal"),
   alarmSound: $("alarmSound"), alarmSnap: $("alarmSnap"),
   gallery: $("gallery"), galleryCount: $("galleryCount"),
+  btnCalib: $("btnCalib"), btnCalibClear: $("btnCalibClear"), btnReport: $("btnReport"),
+  weekLegend: $("weekLegend"), speedLimit: $("speedLimit"), spdHint: $("spdHint"),
+  spdCount: $("spdCount"), spdAvg: $("spdAvg"), spdP85: $("spdP85"),
+  spdMax: $("spdMax"), spdOver: $("spdOver"),
 };
 
 /* ---- 4. Zustand ------------------------------------------------------- */
@@ -83,31 +91,65 @@ let dirTotals = { a: {}, b: {} };
 // Maßstab (Kalibrierung) im Bild: nach dem Verstellen kurz hervorheben
 let calibShowUntil = 0;
 let calibHideTimer = null;
+// 2-Punkt-Kalibrierung (präzise): {x1,y1,x2,y2 normalisiert, meters} oder null
+let calib = storage.get("calib", null);
 
-/* ---- Tages-Statistik (persistent, überlebt Reload) ------------------- */
+// Meter pro Bild-Pixel – aus 2-Punkt-Kalibrierung, sonst aus dem Slider.
+function metersPerPixel() {
+  if (!video.videoWidth) return 0;
+  if (calib) {
+    const distPx = Math.hypot((calib.x2 - calib.x1) * video.videoWidth,
+                              (calib.y2 - calib.y1) * video.videoHeight);
+    if (distPx > 4) return calib.meters / distPx;
+  }
+  return Number(els.calibSlider.value) / video.videoWidth;
+}
+
+/* ---- Statistik pro Tag (persistent, mehrere Tage) -------------------- */
+const KEEP_DAYS = 14;             // so viele Tage aufbewahren
+const MAX_SPEEDS_PER_DAY = 5000;  // Obergrenze gespeicherter Tempo-Werte/Tag
+
 function dateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function freshDay(date) {
-  return { date, hourly: Array.from({ length: 24 }, () => ({})), totals: {} };
+  return { date, hourly: Array.from({ length: 24 }, () => ({})), totals: {}, speeds: [] };
 }
-function loadDay() {
-  const today = dateStr(new Date());
-  const saved = storage.get("day", null);
-  if (saved && saved.date === today && Array.isArray(saved.hourly) && saved.hourly.length === 24) return saved;
-  return freshDay(today);
+function loadDays() {
+  let d = storage.get("days", null);
+  if (!d || typeof d !== "object") {
+    // Migration vom früheren Einzeltag-Format
+    const old = storage.get("day", null);
+    d = {};
+    if (old && old.date) d[old.date] = { date: old.date, hourly: old.hourly, totals: old.totals, speeds: old.speeds || [] };
+  }
+  return d;
 }
-let day = loadDay();
+let days = loadDays();
 let daySaveTimer = null;
 
+// Liefert (und erstellt bei Bedarf) den Datensatz des heutigen Tages.
+function currentDay() {
+  const t = dateStr(new Date());
+  if (!days[t] || !Array.isArray(days[t].hourly) || days[t].hourly.length !== 24) days[t] = freshDay(t);
+  if (!Array.isArray(days[t].speeds)) days[t].speeds = [];
+  days[t].date = t; // immer sicherstellen (auch bei migrierten Einträgen)
+  return days[t];
+}
+function pruneDays() {
+  const keys = Object.keys(days).sort();
+  while (keys.length > KEEP_DAYS) delete days[keys.shift()];
+}
 function scheduleDaySave() {
   clearTimeout(daySaveTimer);
-  daySaveTimer = setTimeout(() => storage.set("day", day), 1500);
+  daySaveTimer = setTimeout(() => { pruneDays(); storage.set("days", days); }, 1500);
 }
-function addToDay(key) {
-  if (day.date !== dateStr(new Date())) day = freshDay(dateStr(new Date())); // Tageswechsel
-  day.hourly[new Date().getHours()][key] = (day.hourly[new Date().getHours()][key] || 0) + 1;
-  day.totals[key] = (day.totals[key] || 0) + 1;
+function addToDay(key, speed) {
+  const d = currentDay();
+  const h = new Date().getHours();
+  d.hourly[h][key] = (d.hourly[h][key] || 0) + 1;
+  d.totals[key] = (d.totals[key] || 0) + 1;
+  if (speed != null && d.speeds.length < MAX_SPEEDS_PER_DAY) d.speeds.push(speed);
   scheduleDaySave();
 }
 
@@ -282,10 +324,9 @@ function processDetections(predictions, now, dt) {
   // Beobachtungs-Zone: Detektionen außerhalb des Bereichs ignorieren.
   if (zone) dets = dets.filter((d) => inZone(d.bbox));
 
-  // Kalibrierung: Bildbreite (px) entspricht "Straßenbreite" (m).
-  const roadWidthM = Number(els.calibSlider.value);
+  // Kalibrierung: entweder 2-Punkt-Referenz oder Slider „Straßenbreite".
   tracker.setFrameSize(video.videoWidth, video.videoHeight);
-  tracker.setMetersPerPixel(roadWidthM / video.videoWidth);
+  tracker.setMetersPerPixel(metersPerPixel());
 
   const tracks = tracker.update(dets, now);
   if (line) checkLineCrossings(tracks); // Zähllinie auswerten
@@ -366,9 +407,10 @@ function drawOverlay(tracks) {
     octx.fillText(label, x + 5, ly + 3);
   }
 
-  // Zone-Rahmen, Zähllinie und Maßstab oben drauf.
+  // Zone-Rahmen, Zähllinie, Kalibrier-Referenz und Maßstab oben drauf.
   drawZoneOutline(m);
   drawLine(m);
+  drawCalibLine(m);
   drawCalibrationScale(m);
 }
 
@@ -438,9 +480,38 @@ function drawLine(m) {
   for (const p of [a, b]) { octx.beginPath(); octx.arc(p.x, p.y, 4, 0, Math.PI * 2); octx.fill(); }
 }
 
+// 2-Punkt-Kalibrier-Referenz zeichnen (präzise Strecke mit bekannter Länge).
+function drawCalibLine(m) {
+  const c = (editMode === "calib" && dragStart && dragCurrent)
+    ? { x1: dragStart.nx, y1: dragStart.ny, x2: dragCurrent.nx, y2: dragCurrent.ny, meters: null }
+    : calib;
+  if (!c) return;
+  const a = normToCanvas(c.x1, c.y1, m), b = normToCanvas(c.x2, c.y2, m);
+  octx.strokeStyle = "#22d3ee";
+  octx.lineWidth = 3;
+  octx.setLineDash([]);
+  octx.beginPath(); octx.moveTo(a.x, a.y); octx.lineTo(b.x, b.y); octx.stroke();
+  octx.fillStyle = "#22d3ee";
+  for (const p of [a, b]) { octx.beginPath(); octx.arc(p.x, p.y, 4, 0, Math.PI * 2); octx.fill(); }
+  if (c.meters) {
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const label = `📏 ${c.meters} m`;
+    octx.font = "600 13px -apple-system, system-ui, sans-serif";
+    octx.textAlign = "center";
+    octx.textBaseline = "bottom";
+    const tw = octx.measureText(label).width;
+    octx.fillStyle = "rgba(8,17,28,0.85)";
+    octx.fillRect(mx - tw / 2 - 6, my - 24, tw + 12, 20);
+    octx.fillStyle = "#22d3ee";
+    octx.fillText(label, mx, my - 8);
+    octx.textAlign = "left";
+  }
+}
+
 // Maßstab am unteren Bildrand: zeigt, welche reale Breite die Bildbreite meint
 // (Grundlage der Tempo-Schätzung). Nach dem Verstellen kurz hervorgehoben.
 function drawCalibrationScale(m) {
+  if (calib) return; // bei präziser 2-Punkt-Kalibrierung keinen Bildbreiten-Maßstab zeigen
   const meters = Number(els.calibSlider.value);
   const dw = video.videoWidth * m.scale;
   const dh = video.videoHeight * m.scale;
@@ -490,7 +561,8 @@ function setEditMode(mode) {
   overlay.style.cursor = mode ? "crosshair" : "default";
   els.toolHint.textContent =
     mode === "zone" ? "Ziehe ein Rechteck über den Bereich, der beobachtet werden soll." :
-    mode === "line" ? "Ziehe eine Linie über die Straße – gezählt wird beim Überqueren." : "";
+    mode === "line" ? "Ziehe eine Linie über die Straße – gezählt wird beim Überqueren." :
+    mode === "calib" ? "Ziehe eine Linie über eine Strecke mit bekannter realer Länge." : "";
   els.toolHint.hidden = !mode;
   updateToolButtons();
 }
@@ -500,8 +572,11 @@ function updateToolButtons() {
   els.btnLine.classList.toggle("is-active", editMode === "line");
   els.btnZone.classList.toggle("has-shape", !!zone && editMode !== "zone");
   els.btnLine.classList.toggle("has-shape", !!line && editMode !== "line");
+  els.btnCalib.classList.toggle("is-active", editMode === "calib");
+  els.btnCalib.classList.toggle("has-shape", !!calib && editMode !== "calib");
   els.btnZoneClear.hidden = !zone;
   els.btnLineClear.hidden = !line;
+  els.btnCalibClear.hidden = !calib;
 }
 
 function onPointerDown(e) {
@@ -528,6 +603,19 @@ function onPointerUp(e) {
       line = { x1: dragStart.nx, y1: dragStart.ny, x2: end.nx, y2: end.ny };
       storage.set("line", line);
       resetLineSides();
+    }
+  } else if (editMode === "calib") {
+    if (Math.hypot(end.nx - dragStart.nx, end.ny - dragStart.ny) > 0.03) {
+      const input = prompt(
+        "Wie lang ist diese Strecke in echt? (in Metern)\n" +
+        "Tipp: geparktes Auto ≈ 4,5 m · Fahrbahnbreite pro Spur ≈ 3 m",
+        calib ? String(calib.meters) : "4.5"
+      );
+      const meters = parseFloat((input || "").replace(",", "."));
+      if (meters > 0) {
+        calib = { x1: dragStart.nx, y1: dragStart.ny, x2: end.nx, y2: end.ny, meters };
+        storage.set("calib", calib);
+      }
     }
   }
   dragStart = dragCurrent = null;
@@ -596,7 +684,7 @@ function onNewObject(track) {
 // Zentrale Zählstelle: kumulativ + optional Richtung + Log.
 function registerCount(key, speed, direction) {
   totals[key] = (totals[key] || 0) + 1;
-  addToDay(key);
+  addToDay(key, speed);
   if (direction === "a") dirTotals.a[key] = (dirTotals.a[key] || 0) + 1;
   else if (direction === "b") dirTotals.b[key] = (dirTotals.b[key] || 0) + 1;
 
@@ -606,6 +694,8 @@ function registerCount(key, speed, direction) {
   addLogEntry(CATEGORIES[key], speed, direction);
   if (direction) updateDirectionBar();
   drawDayChart();
+  drawWeekChart();
+  drawSpeedStats();
   checkAlarm(key, speed);
 }
 
@@ -844,12 +934,13 @@ function drawDayChart() {
   dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   dctx.clearRect(0, 0, w, h);
 
+  const d = currentDay();
   const padL = 26, padR = 8, padT = 10, padB = 20;
   const plotW = w - padL - padR, plotH = h - padT - padB;
 
-  const activeKeys = CATEGORY_KEYS.filter((k) => day.hourly.some((hr) => hr[k] > 0));
+  const activeKeys = CATEGORY_KEYS.filter((k) => d.hourly.some((hr) => hr[k] > 0));
   let maxVal = 1;
-  for (const hr of day.hourly) {
+  for (const hr of d.hourly) {
     maxVal = Math.max(maxVal, CATEGORY_KEYS.reduce((s, k) => s + (hr[k] || 0), 0));
   }
   maxVal = Math.ceil(maxVal);
@@ -873,7 +964,7 @@ function drawDayChart() {
     let yBase = padT + plotH;
     const x = padL + hr * bw;
     for (const k of CATEGORY_KEYS) {
-      const v = day.hourly[hr][k] || 0;
+      const v = d.hourly[hr][k] || 0;
       if (!v) continue;
       const segH = (v / maxVal) * plotH;
       dctx.fillStyle = CATEGORIES[k].color;
@@ -900,6 +991,220 @@ function renderDayLegend(activeKeys) {
         `<span class="legend-item"><span class="legend-dot" style="background:${CATEGORIES[k].color}"></span>${CATEGORIES[k].label}</span>`
       ).join("")
     : `<span class="subtle">Heute noch keine Daten aufgezeichnet.</span>`;
+}
+
+/* ---- 11c. Tempo-Statistik ------------------------------------------- */
+function percentile(sorted, p) {
+  if (!sorted.length) return 0;
+  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return sorted[idx];
+}
+
+// Kennzahlen der heutigen Fahrzeug-Geschwindigkeiten.
+function speedStats() {
+  const speeds = currentDay().speeds || [];
+  if (!speeds.length) return null;
+  const sorted = [...speeds].sort((a, b) => a - b);
+  const sum = sorted.reduce((s, v) => s + v, 0);
+  const limit = Number(els.speedLimit.value) || 50;
+  const over = sorted.filter((v) => v > limit).length;
+  return {
+    count: sorted.length,
+    avg: Math.round(sum / sorted.length),
+    p85: Math.round(percentile(sorted, 85)),
+    max: Math.round(sorted[sorted.length - 1]),
+    overPct: Math.round((over / sorted.length) * 100),
+    limit, sorted,
+  };
+}
+
+function drawSpeedStats() {
+  const st = speedStats();
+  els.spdCount.textContent = st ? st.count : "–";
+  els.spdAvg.textContent = st ? st.avg : "–";
+  els.spdP85.textContent = st ? st.p85 : "–";
+  els.spdMax.textContent = st ? st.max : "–";
+  els.spdOver.textContent = st ? st.overPct + "%" : "–";
+  els.spdHint.textContent = st
+    ? "85 %-Wert = Tempo, das 85 % nicht überschreiten (Standard der Verkehrsplanung)"
+    : "Noch keine Tempo-Daten – Fahrzeuge müssen sich sichtbar bewegen.";
+  drawSpeedHistogram(st);
+}
+
+function drawSpeedHistogram(st) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = speedCanvas.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  speedCanvas.width = Math.round(w * dpr);
+  speedCanvas.height = Math.round(h * dpr);
+  spctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  spctx.clearRect(0, 0, w, h);
+  if (!st) return;
+
+  const padL = 24, padR = 8, padT = 8, padB = 18;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const bucket = 10;
+  const maxSpeed = Math.max(60, Math.ceil(st.max / bucket) * bucket);
+  const n = maxSpeed / bucket;
+  const buckets = Array(n).fill(0);
+  for (const v of st.sorted) buckets[Math.min(n - 1, Math.floor(v / bucket))]++;
+  const maxCount = Math.max(1, ...buckets);
+  const bw = plotW / n;
+
+  for (let i = 0; i < n; i++) {
+    const bh = (buckets[i] / maxCount) * plotH;
+    spctx.fillStyle = i * bucket >= st.limit ? "#f87171" : "#4f9dff";
+    spctx.fillRect(padL + i * bw + 1, padT + plotH - bh, Math.max(1, bw - 2), bh);
+  }
+  // Tempolimit-Markierung
+  const lx = padL + (st.limit / maxSpeed) * plotW;
+  spctx.strokeStyle = "#fbbf24"; spctx.lineWidth = 1.5; spctx.setLineDash([4, 3]);
+  spctx.beginPath(); spctx.moveTo(lx, padT); spctx.lineTo(lx, padT + plotH); spctx.stroke();
+  spctx.setLineDash([]);
+  // Achse
+  spctx.fillStyle = "#64748b"; spctx.font = "11px -apple-system, system-ui, sans-serif";
+  spctx.textBaseline = "alphabetic"; spctx.textAlign = "center";
+  for (let s = 0; s <= maxSpeed; s += 20) spctx.fillText(String(s), padL + (s / maxSpeed) * plotW, h - 5);
+  spctx.textAlign = "right"; spctx.fillText("km/h", w - 2, h - 5); spctx.textAlign = "left";
+}
+
+/* ---- 11d. Mehrtägiger Verlauf --------------------------------------- */
+function drawWeekChart() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = weekCanvas.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  weekCanvas.width = Math.round(w * dpr);
+  weekCanvas.height = Math.round(h * dpr);
+  wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  wctx.clearRect(0, 0, w, h);
+
+  const dateKeys = Object.keys(days).sort();
+  const padL = 24, padR = 8, padT = 10, padB = 22;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const dayTotal = (dk, k) => (days[dk].totals && days[dk].totals[k]) || 0;
+
+  if (!dateKeys.length) { renderWeekLegend([]); return; }
+  let maxVal = 1;
+  for (const dk of dateKeys) maxVal = Math.max(maxVal, CATEGORY_KEYS.reduce((s, k) => s + dayTotal(dk, k), 0));
+  maxVal = Math.ceil(maxVal);
+  const activeKeys = CATEGORY_KEYS.filter((k) => dateKeys.some((dk) => dayTotal(dk, k) > 0));
+
+  wctx.strokeStyle = "#2b3444"; wctx.fillStyle = "#64748b";
+  wctx.font = "11px -apple-system, system-ui, sans-serif"; wctx.textBaseline = "middle"; wctx.lineWidth = 1;
+  for (let i = 0; i <= 2; i++) {
+    const val = Math.round((maxVal / 2) * i);
+    const y = padT + plotH - (val / maxVal) * plotH;
+    wctx.beginPath(); wctx.moveTo(padL, y); wctx.lineTo(padL + plotW, y); wctx.stroke();
+    wctx.fillText(String(val), 3, y);
+  }
+  const bw = plotW / dateKeys.length;
+  dateKeys.forEach((dk, i) => {
+    let yBase = padT + plotH;
+    const x = padL + i * bw;
+    for (const k of CATEGORY_KEYS) {
+      const v = dayTotal(dk, k);
+      if (!v) continue;
+      const segH = (v / maxVal) * plotH;
+      wctx.fillStyle = CATEGORIES[k].color;
+      wctx.fillRect(x + 2, yBase - segH, Math.max(1, bw - 4), segH);
+      yBase -= segH;
+    }
+    if (dateKeys.length <= 10 || i === 0 || i === dateKeys.length - 1) {
+      const [, mo, da] = dk.split("-");
+      wctx.fillStyle = "#64748b"; wctx.textAlign = "center"; wctx.textBaseline = "alphabetic";
+      wctx.fillText(`${da}.${mo}.`, x + bw / 2, h - 6);
+      wctx.textAlign = "left";
+    }
+  });
+  renderWeekLegend(activeKeys);
+}
+
+function renderWeekLegend(activeKeys) {
+  els.weekLegend.innerHTML = activeKeys.length
+    ? activeKeys.map((k) =>
+        `<span class="legend-item"><span class="legend-dot" style="background:${CATEGORIES[k].color}"></span>${CATEGORIES[k].label}</span>`
+      ).join("")
+    : `<span class="subtle">Noch keine Tagesdaten gespeichert.</span>`;
+}
+
+/* ---- 11e. Teilbarer Report (PNG) ------------------------------------ */
+function generateReport() {
+  drawDayChart(); drawWeekChart(); drawSpeedStats(); // Diagramme aktuell halten
+  const d = currentDay();
+  const st = speedStats();
+  const W = 900, P = 36;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = 1180;
+  const x = c.getContext("2d");
+  x.fillStyle = "#0e1117"; x.fillRect(0, 0, W, c.height);
+  x.textBaseline = "top";
+
+  // Kopf
+  x.fillStyle = "#4f9dff"; x.font = "700 32px -apple-system, system-ui, sans-serif";
+  x.fillText("StreetPulse – Verkehrs-Report", P, 34);
+  x.fillStyle = "#93a1b3"; x.font = "15px -apple-system, system-ui, sans-serif";
+  x.fillText(`Erstellt am ${new Date().toLocaleString("de-DE")}  ·  Beobachtungstag: ${d.date}`, P, 76);
+
+  const header = (title, y) => {
+    x.fillStyle = "#e6edf3"; x.font = "600 19px -apple-system, system-ui, sans-serif";
+    x.fillText(title, P, y);
+    x.strokeStyle = "#2b3444"; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(P, y + 28); x.lineTo(W - P, y + 28); x.stroke();
+    return y + 42;
+  };
+  const kpiCard = (cx, cy, cw, val, lbl, color) => {
+    x.fillStyle = "#1a2029"; x.strokeStyle = "#2b3444";
+    x.beginPath(); x.roundRect(cx, cy, cw, 66, 10); x.fill(); x.stroke();
+    x.fillStyle = color || "#e6edf3"; x.font = "700 26px -apple-system, system-ui, sans-serif";
+    x.fillText(String(val), cx + 12, cy + 10);
+    x.fillStyle = "#93a1b3"; x.font = "12px -apple-system, system-ui, sans-serif";
+    x.fillText(lbl, cx + 12, cy + 44);
+  };
+
+  // Zählung heute
+  let y = header("Zählung heute", 116);
+  const cols = 4, gap = 10, cw = (W - 2 * P - (cols - 1) * gap) / cols;
+  CATEGORY_KEYS.forEach((k, i) => {
+    const cx = P + (i % cols) * (cw + gap);
+    const cy = y + Math.floor(i / cols) * (66 + gap);
+    kpiCard(cx, cy, cw, d.totals[k] || 0, `${CATEGORIES[k].emoji} ${CATEGORIES[k].label}`, CATEGORIES[k].color);
+  });
+  y += 2 * (66 + gap) + 12;
+
+  // Tempo-Statistik
+  y = header("Geschwindigkeit" + (calib ? " (2-Punkt-kalibriert)" : " (grobe Schätzung)"), y);
+  if (st) {
+    const items = [
+      [st.count, "Fahrzeuge"], [st.avg + " km/h", "Ø-Tempo"], [st.p85 + " km/h", "85 %-Wert"],
+      [st.max + " km/h", "Spitze"], [st.overPct + " %", "über " + st.limit + " km/h"],
+    ];
+    const scw = (W - 2 * P - 4 * gap) / 5;
+    items.forEach(([v, l], i) => kpiCard(P + i * (scw + gap), y, scw, v, l, i === 4 ? "#f87171" : "#e6edf3"));
+    y += 66 + 12;
+  } else {
+    x.fillStyle = "#93a1b3"; x.font = "14px -apple-system, system-ui, sans-serif";
+    x.fillText("Noch keine Tempo-Messungen vorhanden.", P, y); y += 30;
+  }
+
+  // Diagramme einbetten
+  const chartBlock = (title, canvas, yy, hgt) => {
+    x.fillStyle = "#93a1b3"; x.font = "600 14px -apple-system, system-ui, sans-serif";
+    x.fillText(title, P, yy);
+    if (canvas.width) x.drawImage(canvas, P, yy + 22, W - 2 * P, hgt);
+    return yy + 22 + hgt + 16;
+  };
+  y = chartBlock("Tagesverlauf (pro Stunde)", dayCanvas, y, 150);
+  if (st) y = chartBlock("Tempo-Verteilung", speedCanvas, y, 130);
+  y = chartBlock("Mehrtägiger Verlauf (pro Tag)", weekCanvas, y, 130);
+
+  // Fuß
+  x.fillStyle = "#64748b"; x.font = "12px -apple-system, system-ui, sans-serif";
+  x.fillText("Erstellt mit StreetPulse · lokale Webcam-Zählung · Tempo-Werte sind Schätzungen (abhängig von Kamerawinkel & Kalibrierung).", P, c.height - 34);
+
+  const a = document.createElement("a");
+  a.href = c.toDataURL("image/png");
+  a.download = `streetpulse-report_${d.date}.png`;
+  a.click();
 }
 
 /* ---- 12. CSV-Export --------------------------------------------------- */
@@ -959,8 +1264,8 @@ function resetCounts() {
   tracker.reset();
   dirTotals = { a: {}, b: {} };
   resetLineSides();
-  day = freshDay(dateStr(new Date())); // heutige gespeicherte Statistik verwerfen
-  storage.set("day", day);
+  days[dateStr(new Date())] = freshDay(dateStr(new Date())); // nur heute verwerfen
+  storage.set("days", days);
   obsAccumMs = 0;
   obsStart = (running && !paused) ? performance.now() : 0;
   els.log.innerHTML = `<li class="log-empty">Noch keine Ereignisse …</li>`;
@@ -968,6 +1273,8 @@ function resetCounts() {
   updateDirectionBar();
   drawChart();
   drawDayChart();
+  drawWeekChart();
+  drawSpeedStats();
 }
 
 function setStatus(text, kind) {
@@ -994,6 +1301,11 @@ function bindEvents() {
   els.btnExport.addEventListener("click", exportCsv);
   els.modelSelect.addEventListener("change", (e) => switchModel(e.target.value));
   els.btnDayClear.addEventListener("click", resetCounts);
+  els.btnReport.addEventListener("click", generateReport);
+  els.speedLimit.addEventListener("change", () => {
+    storage.set("speedLimit", Number(els.speedLimit.value) || 50);
+    drawSpeedStats();
+  });
 
   // Alarm-Einstellungen
   els.alarmSpeedOn.addEventListener("change", () => { alarmSettings.speedOn = els.alarmSpeedOn.checked; saveAlarm(); });
@@ -1010,6 +1322,10 @@ function bindEvents() {
   els.btnLineClear.addEventListener("click", () => {
     line = null; storage.remove("line"); resetLineSides();
     updateToolButtons(); updateDirectionBar(); drawOverlay(lastTracks);
+  });
+  els.btnCalib.addEventListener("click", () => setEditMode(editMode === "calib" ? null : "calib"));
+  els.btnCalibClear.addEventListener("click", () => {
+    calib = null; storage.remove("calib"); updateToolButtons(); drawOverlay(lastTracks);
   });
   overlay.addEventListener("pointerdown", onPointerDown);
   overlay.addEventListener("pointermove", onPointerMove);
@@ -1044,6 +1360,7 @@ function init() {
   buildStatCards();
   bindEvents();
   els.modelSelect.value = modelBase;
+  els.speedLimit.value = storage.get("speedLimit", 50);
   // Alarm-Einstellungen in die UI übernehmen
   buildAlarmCategories();
   els.alarmSpeedOn.checked = alarmSettings.speedOn;
@@ -1051,7 +1368,8 @@ function init() {
   els.alarmSound.checked = alarmSettings.sound;
   els.alarmSnap.checked = alarmSettings.snap;
   // heutige, gespeicherte Zählung in die Anzeige übernehmen (überlebt Reload)
-  for (const k of CATEGORY_KEYS) totals[k] = day.totals[k] || 0;
+  const dToday = currentDay();
+  for (const k of CATEGORY_KEYS) totals[k] = dToday.totals[k] || 0;
   els.log.innerHTML = `<li class="log-empty">Noch keine Ereignisse …</li>`;
   updateStats([]);
   updateDirectionBar();
@@ -1059,6 +1377,8 @@ function init() {
   renderGallery();
   drawChart();
   drawDayChart();
+  drawWeekChart();
+  drawSpeedStats();
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
   loadModel();

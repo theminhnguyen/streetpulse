@@ -48,6 +48,7 @@
       </label>
       <button id="btnReset" class="btn">↺ Zähler zurücksetzen</button>
       <button id="btnExport" class="btn">⬇ CSV-Export</button>
+      <button id="btnReport" class="btn">📄 Report</button>
     </div>
 
     <div class="control-group control-group--sliders">
@@ -71,6 +72,8 @@
         <button id="btnZoneClear" class="tool-btn tool-btn--clear" title="Zone entfernen" hidden>✕</button>
         <button id="btnLine" class="tool-btn" title="Objekte beim Überqueren einer Linie zählen – mit Richtung">╱ Zähllinie</button>
         <button id="btnLineClear" class="tool-btn tool-btn--clear" title="Zähllinie entfernen" hidden>✕</button>
+        <button id="btnCalib" class="tool-btn" title="Tempo präzise kalibrieren: Strecke mit bekannter Länge markieren">📏 Kalibrieren</button>
+        <button id="btnCalibClear" class="tool-btn tool-btn--clear" title="Kalibrierung entfernen" hidden>✕</button>
       </div>
       <div class="video-wrap">
         <video id="video" playsinline muted></video>
@@ -101,7 +104,7 @@
       <h2>Beobachtungen</h2>
       <div id="statGrid" class="stat-grid"><!-- per JS gefüllt --></div>
       <p class="stats-note">
-        <b>Jetzt</b> = aktuell im Bild &nbsp;·&nbsp; <b>Gesamt</b> = seit Start eindeutig gezählt
+        <b>Jetzt</b> = aktuell im Bild &nbsp;·&nbsp; <b>Gesamt</b> = heute insgesamt (bleibt nach Neuladen)
       </p>
     </div>
   </main>
@@ -129,6 +132,31 @@
     </h2>
     <canvas id="dayChart"></canvas>
     <div id="dayLegend" class="chart-legend"></div>
+  </section>
+
+  <!-- Tempo-Statistik + Mehrtages-Verlauf -->
+  <section class="grid grid--bottom">
+    <div class="panel panel--speed">
+      <h2>Tempo-Statistik <span class="subtle">(heute, gemessene Fahrzeuge)</span></h2>
+      <div class="speed-kpis">
+        <div class="kpi"><div class="kpi-val" id="spdCount">–</div><div class="kpi-lbl">Fahrzeuge</div></div>
+        <div class="kpi"><div class="kpi-val" id="spdAvg">–</div><div class="kpi-lbl">Ø&nbsp;km/h</div></div>
+        <div class="kpi"><div class="kpi-val" id="spdP85">–</div><div class="kpi-lbl">85&nbsp;%-Wert</div></div>
+        <div class="kpi"><div class="kpi-val" id="spdMax">–</div><div class="kpi-lbl">Spitze</div></div>
+        <div class="kpi kpi--warn"><div class="kpi-val" id="spdOver">–</div><div class="kpi-lbl">über&nbsp;Limit</div></div>
+      </div>
+      <div class="speed-limit-row">
+        <label>Tempolimit: <input id="speedLimit" type="number" class="num-input" value="50" min="5" max="200" /> km/h</label>
+        <span class="subtle" id="spdHint"></span>
+      </div>
+      <canvas id="speedChart"></canvas>
+    </div>
+
+    <div class="panel panel--week">
+      <h2>Mehrtägiger Verlauf <span class="subtle">(Erkennungen gesamt pro Tag)</span></h2>
+      <canvas id="weekChart"></canvas>
+      <div id="weekLegend" class="chart-legend"></div>
+    </div>
   </section>
 
   <!-- Alarm & Schnappschüsse -->

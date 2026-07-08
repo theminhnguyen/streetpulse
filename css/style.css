@@ -414,6 +414,18 @@ html, body {
 .snap img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .snap:hover { border-color: var(--accent); }
 
+/* ---------- Tempo-Statistik & Wochenverlauf ---------- */
+.panel--speed canvas, .panel--week canvas { width: 100%; height: 150px; display: block; margin-top: 12px; }
+.speed-kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.kpi {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 4px; text-align: center;
+}
+.kpi-val { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.kpi-lbl { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.kpi--warn .kpi-val { color: var(--danger); }
+.speed-limit-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--text-dim); }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
   .grid, .grid--bottom { grid-template-columns: 1fr; }
@@ -423,4 +435,5 @@ html, body {
 @media (max-width: 520px) {
   .stat-grid { grid-template-columns: 1fr; }
   .topbar-right { width: 100%; }
+  .speed-kpis { grid-template-columns: repeat(3, 1fr); }
 }
