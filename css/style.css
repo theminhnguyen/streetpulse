@@ -144,6 +144,14 @@ html, body {
   font-size: 13.5px;
   max-width: 200px;
 }
+.inline-select {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.inline-select .select { padding: 7px 10px; }
 
 .slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-dim); min-width: 190px; }
 .slider span { display: flex; justify-content: space-between; gap: 10px; }
@@ -213,6 +221,81 @@ html, body {
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Werkzeugleiste über dem Video */
+.video-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.tools-label { font-size: 12.5px; color: var(--text-faint); font-weight: 600; }
+.tool-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-dim);
+  padding: 6px 11px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.tool-btn:hover { background: #2a3444; color: var(--text); }
+.tool-btn.is-active {
+  background: #1c3a5e;
+  border-color: var(--accent);
+  color: #fff;
+}
+.tool-btn.has-shape { border-color: var(--accent-2); color: var(--accent-2); }
+.tool-btn--clear { padding: 6px 9px; color: var(--danger); }
+.tool-btn--clear:hover { background: #2a1418; color: var(--danger); }
+
+/* Hinweis-Banner über dem Bild (verschiebt das Layout nicht) */
+.tool-hint-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  background: rgba(8, 17, 28, 0.88);
+  color: var(--accent-2);
+  border: 1px solid var(--accent);
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  pointer-events: none;
+  max-width: 90%;
+  text-align: center;
+}
+
+/* Richtungs-Anzeige der Zähllinie */
+.direction-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 10px;
+  padding: 9px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.direction-bar .dir {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 70px;
+  justify-content: center;
+}
+.direction-bar .dir-arrow { font-size: 22px; color: var(--accent); }
+.direction-bar .dir-mid { font-size: 12.5px; color: var(--text-faint); font-weight: 600; }
 
 /* ---------- Stats ---------- */
 .stat-grid {

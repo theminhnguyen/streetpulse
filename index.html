@@ -32,6 +32,13 @@
       <button id="btnCamera" class="btn btn--primary">📷 Kamera starten</button>
       <button id="btnPause" class="btn" disabled>⏸ Pause</button>
       <select id="cameraSelect" class="select" title="Kamera auswählen" hidden></select>
+      <label class="inline-select" title="„Genau" erkennt mehr Objekte, braucht aber mehr Rechenleistung.">
+        <span>Genauigkeit</span>
+        <select id="modelSelect" class="select">
+          <option value="lite_mobilenet_v2">Schnell</option>
+          <option value="mobilenet_v2">Genau</option>
+        </select>
+      </label>
     </div>
 
     <div class="control-group">
@@ -58,9 +65,17 @@
   <main class="grid">
     <!-- Kamerabild + Erkennungs-Overlay -->
     <div class="panel panel--video">
+      <div class="video-tools">
+        <span class="tools-label">Werkzeuge</span>
+        <button id="btnZone" class="tool-btn" title="Nur einen Bildbereich auswerten (z. B. nur die Straße)">▦ Zone</button>
+        <button id="btnZoneClear" class="tool-btn tool-btn--clear" title="Zone entfernen" hidden>✕</button>
+        <button id="btnLine" class="tool-btn" title="Objekte beim Überqueren einer Linie zählen – mit Richtung">╱ Zähllinie</button>
+        <button id="btnLineClear" class="tool-btn tool-btn--clear" title="Zähllinie entfernen" hidden>✕</button>
+      </div>
       <div class="video-wrap">
         <video id="video" playsinline muted></video>
         <canvas id="overlay"></canvas>
+        <div id="toolHint" class="tool-hint-banner" hidden></div>
         <div id="videoHint" class="video-hint">
           <div class="video-hint-inner">
             <div class="video-hint-icon">📷</div>
@@ -73,6 +88,11 @@
         <span id="fpsMeter" class="chip">– FPS</span>
         <span id="objMeter" class="chip">0 Objekte im Bild</span>
         <span id="runtimeMeter" class="chip">Laufzeit 00:00</span>
+      </div>
+      <div id="dirBar" class="direction-bar" hidden>
+        <span class="dir"><span class="dir-arrow" id="dirAArrow">→</span> <b id="dirA">0</b></span>
+        <span class="dir-mid">Zähllinie · Richtungen</span>
+        <span class="dir"><b id="dirB">0</b> <span class="dir-arrow" id="dirBArrow">←</span></span>
       </div>
     </div>
 

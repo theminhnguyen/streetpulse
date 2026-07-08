@@ -1,4 +1,5 @@
 import { ObjectTracker } from "./tracker.js";
+import { storage } from "./storage.js";
 
 /* =========================================================================
  * Fenster-Watch – Hauptlogik
@@ -39,6 +40,11 @@ const els = {
   calibSlider: $("calibSlider"), calibVal: $("calibVal"), videoHint: $("videoHint"),
   statGrid: $("statGrid"), fpsMeter: $("fpsMeter"), objMeter: $("objMeter"),
   runtimeMeter: $("runtimeMeter"), chartLegend: $("chartLegend"), log: $("log"),
+  modelSelect: $("modelSelect"),
+  btnZone: $("btnZone"), btnZoneClear: $("btnZoneClear"),
+  btnLine: $("btnLine"), btnLineClear: $("btnLineClear"), toolHint: $("toolHint"),
+  dirBar: $("dirBar"), dirA: $("dirA"), dirB: $("dirB"),
+  dirAArrow: $("dirAArrow"), dirBArrow: $("dirBArrow"),
 };
 
 /* ---- 4. Zustand ------------------------------------------------------- */
@@ -58,7 +64,19 @@ const observationMs = () => obsAccumMs + (obsStart ? performance.now() - obsStar
 const totals = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, 0]));   // kumulativ
 let liveCounts = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, 0])); // aktuell im Bild
 const history = [];      // [{person:n, car:n, ...}] pro Sekunde
-const logRows = [];      // {time, secs, key, speed}
+const logRows = [];      // {time, secs, key, speed, dir}
+
+// Zone & Zähllinie (normalisierte 0..1-Koordinaten -> auflösungsunabhängig)
+let zone = storage.get("zone", null);   // {x, y, w, h} oder null
+let line = storage.get("line", null);   // {x1, y1, x2, y2} oder null
+let editMode = null;                    // null | "zone" | "line" (Zeichenmodus)
+let dragStart = null, dragCurrent = null;
+let lastTracks = [];                    // zuletzt gezeichnete Tracks (für Neuzeichnen)
+// Richtungs-Zählung der Zähllinie
+let dirTotals = { a: {}, b: {} };
+// Maßstab (Kalibrierung) im Bild: nach dem Verstellen kurz hervorheben
+let calibShowUntil = 0;
+let calibHideTimer = null;
 
 const tracker = new ObjectTracker({
   confirmHits: 2,
@@ -68,7 +86,15 @@ const tracker = new ObjectTracker({
 
 /* ---- 5. Modell laden -------------------------------------------------- */
 let modelLoading = false;
+let modelBase = storage.get("modelBase", "lite_mobilenet_v2"); // "Schnell" | "Genau"
 const MODEL_MAX_TRIES = 3;
+
+// Passenden Status setzen, je nachdem ob gerade beobachtet wird.
+function setReadyStatus() {
+  if (running && !paused) setStatus("Live – Beobachtung läuft", "live");
+  else if (running && paused) setStatus("Pausiert", "idle");
+  else setStatus("Bereit – Kamera oder Video starten", "idle");
+}
 
 async function loadModel(attempt = 1) {
   if (model || modelLoading) return;
@@ -82,10 +108,10 @@ async function loadModel(attempt = 1) {
   els.status.style.cursor = "default";
   setStatus(attempt === 1 ? "Modell wird geladen …" : `Modell wird geladen … (Versuch ${attempt})`, "loading");
   try {
-    model = await cocoSsd.load({ base: "lite_mobilenet_v2" });
+    model = await cocoSsd.load({ base: modelBase });
     modelLoading = false;
-    setStatus("Bereit – Kamera oder Video starten", "idle");
     els.btnCamera.disabled = false;
+    setReadyStatus();
   } catch (err) {
     console.error("Modell-Laden fehlgeschlagen:", err);
     modelLoading = false;
@@ -98,6 +124,16 @@ async function loadModel(attempt = 1) {
       els.status.style.cursor = "pointer";
     }
   }
+}
+
+// Genauigkeit umschalten: Modell austauschen (Beobachtung läuft nahtlos weiter).
+function switchModel(base) {
+  if (base === modelBase && model) return;
+  modelBase = base;
+  storage.set("modelBase", base);
+  model = null; // detectLoop pausiert automatisch, bis das neue Modell geladen ist
+  setStatus("Modell wird gewechselt …", "loading");
+  loadModel(1);
 }
 
 /* ---- 6. Quellen: Kamera / Video --------------------------------------- */
@@ -206,10 +242,12 @@ async function detectLoop() {
 
 function processDetections(predictions, now, dt) {
   // Nur relevante Klassen behalten und in Tracker-Format bringen.
-  const dets = [];
+  let dets = [];
   for (const p of predictions) {
     if (CATEGORIES[p.class]) dets.push({ class: p.class, score: p.score, bbox: p.bbox });
   }
+  // Beobachtungs-Zone: Detektionen außerhalb des Bereichs ignorieren.
+  if (zone) dets = dets.filter((d) => inZone(d.bbox));
 
   // Kalibrierung: Bildbreite (px) entspricht "Straßenbreite" (m).
   const roadWidthM = Number(els.calibSlider.value);
@@ -217,11 +255,13 @@ function processDetections(predictions, now, dt) {
   tracker.setMetersPerPixel(roadWidthM / video.videoWidth);
 
   const tracks = tracker.update(dets, now);
+  if (line) checkLineCrossings(tracks); // Zähllinie auswerten
 
   // Live-Zählung aus aktiven Tracks.
   liveCounts = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, 0]));
   for (const t of tracks) liveCounts[t.class] = (liveCounts[t.class] || 0) + 1;
 
+  lastTracks = tracks;
   drawOverlay(tracks);
   updateStats(tracks);
 
@@ -262,24 +302,24 @@ function drawOverlay(tracks) {
   const { w, h } = syncOverlaySize();
   octx.clearRect(0, 0, w, h);
   if (!video.videoWidth) return;
-  const { scale, ox, oy } = videoMapper(w, h);
+  const m = videoMapper(w, h);
 
-  octx.lineWidth = 2;
-  octx.font = "600 13px -apple-system, system-ui, sans-serif";
+  // Bereich außerhalb der Zone abdunkeln (nicht während des Zeichnens).
+  if (zone && editMode !== "zone") drawZoneMask(m, w, h);
+
+  // Erkannte Objekte.
   octx.textBaseline = "top";
-
   for (const t of tracks) {
     const cat = CATEGORIES[t.class];
-    const x = ox + t.bbox[0] * scale;
-    const y = oy + t.bbox[1] * scale;
-    const bw = t.bbox[2] * scale;
-    const bh = t.bbox[3] * scale;
+    const x = m.ox + t.bbox[0] * m.scale;
+    const y = m.oy + t.bbox[1] * m.scale;
+    const bw = t.bbox[2] * m.scale;
+    const bh = t.bbox[3] * m.scale;
 
-    // Box
+    octx.lineWidth = 2;
     octx.strokeStyle = cat.color;
     octx.strokeRect(x, y, bw, bh);
 
-    // Label
     let label = `${cat.emoji} ${cat.singular}`;
     if (cat.vehicle && t.speedKmh != null && t.speedKmh >= 3) {
       label += `  ${Math.round(t.speedKmh)} km/h`;
@@ -292,6 +332,175 @@ function drawOverlay(tracks) {
     octx.fillStyle = "#08111c";
     octx.fillText(label, x + 5, ly + 3);
   }
+
+  // Zone-Rahmen, Zähllinie und Maßstab oben drauf.
+  drawZoneOutline(m);
+  drawLine(m);
+  drawCalibrationScale(m);
+}
+
+/* ---- 8b. Zone & Zähllinie: Zeichnen + Maus/Touch --------------------- */
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// normalisierte (0..1) -> Canvas-CSS-Pixel
+function normToCanvas(nx, ny, m) {
+  return { x: m.ox + nx * video.videoWidth * m.scale, y: m.oy + ny * video.videoHeight * m.scale };
+}
+
+function inZone(bbox) {
+  const nx = (bbox[0] + bbox[2] / 2) / video.videoWidth;
+  const ny = (bbox[1] + bbox[3] / 2) / video.videoHeight;
+  return nx >= zone.x && nx <= zone.x + zone.w && ny >= zone.y && ny <= zone.y + zone.h;
+}
+
+function currentZoneRect() {
+  if (editMode === "zone" && dragStart && dragCurrent) {
+    return {
+      x: Math.min(dragStart.nx, dragCurrent.nx), y: Math.min(dragStart.ny, dragCurrent.ny),
+      w: Math.abs(dragCurrent.nx - dragStart.nx), h: Math.abs(dragCurrent.ny - dragStart.ny),
+    };
+  }
+  return zone;
+}
+
+function drawZoneMask(m, w, h) {
+  const p = normToCanvas(zone.x, zone.y, m);
+  const dw = zone.w * video.videoWidth * m.scale, dh = zone.h * video.videoHeight * m.scale;
+  octx.fillStyle = "rgba(5,7,11,0.55)";
+  octx.fillRect(0, 0, w, h);
+  octx.clearRect(p.x, p.y, dw, dh); // Zonenbereich wieder freilegen
+}
+
+function drawZoneOutline(m) {
+  const z = currentZoneRect();
+  if (!z || z.w <= 0 || z.h <= 0) return;
+  const p = normToCanvas(z.x, z.y, m);
+  const dw = z.w * video.videoWidth * m.scale, dh = z.h * video.videoHeight * m.scale;
+  octx.strokeStyle = "#38bdf8";
+  octx.lineWidth = 2;
+  octx.setLineDash([7, 4]);
+  octx.strokeRect(p.x, p.y, dw, dh);
+  octx.setLineDash([]);
+  octx.fillStyle = "#38bdf8";
+  octx.font = "600 12px -apple-system, system-ui, sans-serif";
+  octx.textBaseline = "top";
+  octx.fillText("Zone", p.x + 5, p.y + 4);
+}
+
+function currentLine() {
+  if (editMode === "line" && dragStart && dragCurrent) {
+    return { x1: dragStart.nx, y1: dragStart.ny, x2: dragCurrent.nx, y2: dragCurrent.ny };
+  }
+  return line;
+}
+
+function drawLine(m) {
+  const l = currentLine();
+  if (!l) return;
+  const a = normToCanvas(l.x1, l.y1, m), b = normToCanvas(l.x2, l.y2, m);
+  octx.strokeStyle = "#f7d154";
+  octx.lineWidth = 3;
+  octx.beginPath(); octx.moveTo(a.x, a.y); octx.lineTo(b.x, b.y); octx.stroke();
+  octx.fillStyle = "#f7d154";
+  for (const p of [a, b]) { octx.beginPath(); octx.arc(p.x, p.y, 4, 0, Math.PI * 2); octx.fill(); }
+}
+
+// Maßstab am unteren Bildrand: zeigt, welche reale Breite die Bildbreite meint
+// (Grundlage der Tempo-Schätzung). Nach dem Verstellen kurz hervorgehoben.
+function drawCalibrationScale(m) {
+  const meters = Number(els.calibSlider.value);
+  const dw = video.videoWidth * m.scale;
+  const dh = video.videoHeight * m.scale;
+  const x0 = m.ox, x1 = m.ox + dw;
+  const y = m.oy + dh - Math.min(40, dh * 0.13);
+  const pxPerM = dw / meters;
+  const recent = performance.now() < calibShowUntil;
+
+  // Tick-Abstand so wählen, dass nicht zu viele Markierungen entstehen.
+  const step = [1, 2, 5, 10, 20, 50].find((s) => meters / s <= 15) || 100;
+
+  octx.save();
+  octx.globalAlpha = recent ? 1 : 0.5;
+  octx.strokeStyle = "#ffffff";
+  octx.fillStyle = "#ffffff";
+  octx.shadowColor = "rgba(0,0,0,0.85)";
+  octx.shadowBlur = 3;
+
+  octx.lineWidth = 2;
+  octx.beginPath(); octx.moveTo(x0, y); octx.lineTo(x1, y); octx.stroke();          // Hauptlinie
+  for (const ex of [x0, x1]) {                                                       // Endkappen
+    octx.beginPath(); octx.moveTo(ex, y - 9); octx.lineTo(ex, y + 9); octx.stroke();
+  }
+  octx.lineWidth = 1;
+  for (let mtr = step; mtr < meters; mtr += step) {                                  // Meter-Ticks
+    const tx = x0 + mtr * pxPerM;
+    octx.beginPath(); octx.moveTo(tx, y - 4); octx.lineTo(tx, y + 4); octx.stroke();
+  }
+  octx.font = `600 ${recent ? 14 : 12}px -apple-system, system-ui, sans-serif`;
+  octx.textAlign = "center";
+  octx.textBaseline = "bottom";
+  octx.fillText(`↔ Straßenbreite ≈ ${meters} m`, (x0 + x1) / 2, y - 11);
+  octx.restore();
+}
+
+function pointerToNorm(evt) {
+  const rect = overlay.getBoundingClientRect();
+  const m = videoMapper(rect.width, rect.height);
+  const vx = (evt.clientX - rect.left - m.ox) / m.scale;
+  const vy = (evt.clientY - rect.top - m.oy) / m.scale;
+  return { nx: clamp(vx / video.videoWidth, 0, 1), ny: clamp(vy / video.videoHeight, 0, 1) };
+}
+
+function setEditMode(mode) {
+  editMode = mode;
+  overlay.style.pointerEvents = mode ? "auto" : "none";
+  overlay.style.cursor = mode ? "crosshair" : "default";
+  els.toolHint.textContent =
+    mode === "zone" ? "Ziehe ein Rechteck über den Bereich, der beobachtet werden soll." :
+    mode === "line" ? "Ziehe eine Linie über die Straße – gezählt wird beim Überqueren." : "";
+  els.toolHint.hidden = !mode;
+  updateToolButtons();
+}
+
+function updateToolButtons() {
+  els.btnZone.classList.toggle("is-active", editMode === "zone");
+  els.btnLine.classList.toggle("is-active", editMode === "line");
+  els.btnZone.classList.toggle("has-shape", !!zone && editMode !== "zone");
+  els.btnLine.classList.toggle("has-shape", !!line && editMode !== "line");
+  els.btnZoneClear.hidden = !zone;
+  els.btnLineClear.hidden = !line;
+}
+
+function onPointerDown(e) {
+  if (!editMode || !video.videoWidth) return;
+  try { overlay.setPointerCapture(e.pointerId); } catch { /* nicht kritisch */ }
+  dragStart = dragCurrent = pointerToNorm(e);
+}
+function onPointerMove(e) {
+  if (!editMode || !dragStart) return;
+  dragCurrent = pointerToNorm(e);
+  drawOverlay(lastTracks);
+}
+function onPointerUp(e) {
+  if (!editMode || !dragStart) return;
+  const end = pointerToNorm(e);
+  if (editMode === "zone") {
+    const z = {
+      x: Math.min(dragStart.nx, end.nx), y: Math.min(dragStart.ny, end.ny),
+      w: Math.abs(end.nx - dragStart.nx), h: Math.abs(end.ny - dragStart.ny),
+    };
+    if (z.w > 0.02 && z.h > 0.02) { zone = z; storage.set("zone", zone); }
+  } else if (editMode === "line") {
+    if (Math.hypot(end.nx - dragStart.nx, end.ny - dragStart.ny) > 0.05) {
+      line = { x1: dragStart.nx, y1: dragStart.ny, x2: end.nx, y2: end.ny };
+      storage.set("line", line);
+      resetLineSides();
+    }
+  }
+  dragStart = dragCurrent = null;
+  setEditMode(null);        // nach dem Ziehen Zeichenmodus verlassen
+  updateDirectionBar();
+  drawOverlay(lastTracks);
 }
 
 /* ---- 9. Statistik-Kacheln -------------------------------------------- */
@@ -336,20 +545,35 @@ function updateStats(tracks) {
   }
 }
 
-/* ---- 10. Neues Objekt bestätigt -> zählen + loggen ------------------- */
-function onNewObject(track) {
-  totals[track.class] = (totals[track.class] || 0) + 1;
+/* ---- 10. Zählen + loggen --------------------------------------------- */
+// Grobe km/h eines Fahrzeug-Tracks (oder null bei Personen/Tieren/Stillstand).
+function trackSpeed(track) {
   const cat = CATEGORIES[track.class];
-  const secs = observationMs() / 1000;
-  const speed = cat.vehicle && track.speedKmh != null && track.speedKmh >= 3
+  return cat.vehicle && track.speedKmh != null && track.speedKmh >= 3
     ? Math.round(track.speedKmh) : null;
-
-  logRows.push({ time: new Date(), secs, key: track.class, speed });
-  if (logRows.length > MAX_LOG_ROWS) logRows.shift();
-  addLogEntry(cat, speed);
 }
 
-function addLogEntry(cat, speed) {
+// Vom Tracker aufgerufen, sobald ein Objekt bestätigt ist.
+function onNewObject(track) {
+  // Ist eine Zähllinie aktiv, wird erst beim Überqueren gezählt (checkLineCrossings).
+  if (line) return;
+  registerCount(track.class, trackSpeed(track), null);
+}
+
+// Zentrale Zählstelle: kumulativ + optional Richtung + Log.
+function registerCount(key, speed, direction) {
+  totals[key] = (totals[key] || 0) + 1;
+  if (direction === "a") dirTotals.a[key] = (dirTotals.a[key] || 0) + 1;
+  else if (direction === "b") dirTotals.b[key] = (dirTotals.b[key] || 0) + 1;
+
+  const secs = observationMs() / 1000;
+  logRows.push({ time: new Date(), secs, key, speed, dir: direction });
+  if (logRows.length > MAX_LOG_ROWS) logRows.shift();
+  addLogEntry(CATEGORIES[key], speed, direction);
+  if (direction) updateDirectionBar();
+}
+
+function addLogEntry(cat, speed, direction) {
   // "Log ist leer"-Platzhalter entfernen.
   const empty = els.log.querySelector(".log-empty");
   if (empty) empty.remove();
@@ -359,12 +583,54 @@ function addLogEntry(cat, speed) {
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
   const ss = String(now.getSeconds()).padStart(2, "0");
+  const arrow = direction ? directionArrows()[direction] + " " : "";
   li.innerHTML = `
     <span class="log-time">${hh}:${mm}:${ss}</span>
     <span class="log-emoji">${cat.emoji}</span>
-    <span class="log-text">${cat.singular}${speed ? ` · ~${speed} km/h` : ""}</span>`;
+    <span class="log-text">${arrow}${cat.singular}${speed ? ` · ~${speed} km/h` : ""}</span>`;
   els.log.prepend(li);
   while (els.log.children.length > 60) els.log.lastChild.remove();
+}
+
+/* ---- 10b. Zähllinie: Überquerungen + Richtung ------------------------ */
+function checkLineCrossings(tracks) {
+  const dx = line.x2 - line.x1, dy = line.y2 - line.y1;
+  for (const t of tracks) {
+    const nx = (t.bbox[0] + t.bbox[2] / 2) / video.videoWidth;
+    const ny = (t.bbox[1] + t.bbox[3] / 2) / video.videoHeight;
+    // Vorzeichen = auf welcher Seite der Linie liegt das Objekt?
+    const side = Math.sign(dx * (ny - line.y1) - dy * (nx - line.x1));
+    if (side === 0) continue;                       // genau auf der Linie -> abwarten
+    if (t._lineSide === undefined) { t._lineSide = side; continue; }
+    if (side !== t._lineSide) {                      // Seitenwechsel = Überquerung
+      const direction = (t._lineSide < 0 && side > 0) ? "a" : "b";
+      registerCount(t.class, trackSpeed(t), direction);
+      t._lineSide = side;
+    }
+  }
+}
+
+function resetLineSides() {
+  for (const t of tracker.getTracks()) delete t._lineSide;
+}
+
+// Pfeil-Symbole passend zur Linien-Ausrichtung (a = Bewegung von Seite − nach +).
+function directionArrows() {
+  if (!line) return { a: "→", b: "←" };
+  const nx = -(line.y2 - line.y1), ny = (line.x2 - line.x1); // Richtung steigender "side"
+  if (Math.abs(nx) >= Math.abs(ny)) return nx > 0 ? { a: "→", b: "←" } : { a: "←", b: "→" };
+  return ny > 0 ? { a: "↓", b: "↑" } : { a: "↑", b: "↓" };
+}
+
+function updateDirectionBar() {
+  if (!line) { els.dirBar.hidden = true; return; }
+  els.dirBar.hidden = false;
+  const sum = (o) => Object.values(o).reduce((s, n) => s + n, 0);
+  els.dirA.textContent = sum(dirTotals.a);
+  els.dirB.textContent = sum(dirTotals.b);
+  const arr = directionArrows();
+  els.dirAArrow.textContent = arr.a;
+  els.dirBArrow.textContent = arr.b;
 }
 
 /* ---- 11. Verlaufs-Diagramm ------------------------------------------- */
@@ -452,11 +718,16 @@ function exportCsv() {
   for (const key of CATEGORY_KEYS) {
     lines.push(`# ${CATEGORIES[key].label};${totals[key]}`);
   }
+  if (line) {
+    const sum = (o) => Object.values(o).reduce((s, n) => s + n, 0);
+    lines.push(`# Zähllinie Richtung A gesamt;${sum(dirTotals.a)}`);
+    lines.push(`# Zähllinie Richtung B gesamt;${sum(dirTotals.b)}`);
+  }
   lines.push("");
-  lines.push("Uhrzeit;Sekunde_seit_Start;Kategorie;Tempo_kmh");
+  lines.push("Uhrzeit;Sekunde_seit_Start;Kategorie;Tempo_kmh;Richtung");
   for (const row of logRows) {
     const t = row.time.toLocaleTimeString("de-DE");
-    lines.push(`${t};${row.secs.toFixed(1)};${CATEGORIES[row.key].label};${row.speed ?? ""}`);
+    lines.push(`${t};${row.secs.toFixed(1)};${CATEGORIES[row.key].label};${row.speed ?? ""};${row.dir ? row.dir.toUpperCase() : ""}`);
   }
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -494,10 +765,13 @@ function resetCounts() {
   history.length = 0;
   logRows.length = 0;
   tracker.reset();
+  dirTotals = { a: {}, b: {} };
+  resetLineSides();
   obsAccumMs = 0;
   obsStart = (running && !paused) ? performance.now() : 0;
   els.log.innerHTML = `<li class="log-empty">Noch keine Ereignisse …</li>`;
   updateStats([]);
+  updateDirectionBar();
   drawChart();
 }
 
@@ -523,11 +797,31 @@ function bindEvents() {
   els.cameraSelect.addEventListener("change", (e) => startCamera(e.target.value));
   els.btnReset.addEventListener("click", resetCounts);
   els.btnExport.addEventListener("click", exportCsv);
+  els.modelSelect.addEventListener("change", (e) => switchModel(e.target.value));
+
+  // Zone & Zähllinie
+  els.btnZone.addEventListener("click", () => setEditMode(editMode === "zone" ? null : "zone"));
+  els.btnLine.addEventListener("click", () => setEditMode(editMode === "line" ? null : "line"));
+  els.btnZoneClear.addEventListener("click", () => {
+    zone = null; storage.remove("zone"); updateToolButtons(); drawOverlay(lastTracks);
+  });
+  els.btnLineClear.addEventListener("click", () => {
+    line = null; storage.remove("line"); resetLineSides();
+    updateToolButtons(); updateDirectionBar(); drawOverlay(lastTracks);
+  });
+  overlay.addEventListener("pointerdown", onPointerDown);
+  overlay.addEventListener("pointermove", onPointerMove);
+  overlay.addEventListener("pointerup", onPointerUp);
   els.confSlider.addEventListener("input", () => {
     els.confVal.innerHTML = els.confSlider.value + "&nbsp;%";
   });
   els.calibSlider.addEventListener("input", () => {
     els.calibVal.innerHTML = els.calibSlider.value + "&nbsp;m";
+    // Maßstab im Bild sofort zeigen und kurz hervorheben (auch bei Pause).
+    calibShowUntil = performance.now() + 2500;
+    drawOverlay(lastTracks);
+    clearTimeout(calibHideTimer);
+    calibHideTimer = setTimeout(() => drawOverlay(lastTracks), 2600);
   });
   // Klick auf Status im Fehlerfall -> Modell erneut laden.
   els.status.addEventListener("click", () => {
@@ -547,7 +841,9 @@ function bindEvents() {
 function init() {
   buildStatCards();
   bindEvents();
+  els.modelSelect.value = modelBase;
   resetCounts(); // setzt Zähler/Log/Diagramm auf den Startzustand
+  updateToolButtons(); // gespeicherte Zone/Linie in den Buttons spiegeln
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
   loadModel();
