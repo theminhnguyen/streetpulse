@@ -2,7 +2,7 @@ import { ObjectTracker } from "./tracker.js";
 import { storage } from "./storage.js";
 
 /* =========================================================================
- * Fenster-Watch – Hauptlogik
+ * StreetPulse – Hauptlogik
  * Kamera/Video -> COCO-SSD Objekterkennung -> Tracking -> Dashboard
  * Läuft komplett im Browser, keine Daten verlassen den Rechner.
  * ========================================================================= */
@@ -753,7 +753,7 @@ function renderGallery() {
   }
   els.galleryCount.textContent = `(${snapshots.length})`;
   els.gallery.innerHTML = snapshots.map((s, i) =>
-    `<a class="snap" href="${s.dataUrl}" download="fenster-watch-foto-${i + 1}.jpg" title="${s.label} – klicken zum Speichern"><img src="${s.dataUrl}" alt="${s.label}" /></a>`
+    `<a class="snap" href="${s.dataUrl}" download="streetpulse-foto-${i + 1}.jpg" title="${s.label} – klicken zum Speichern"><img src="${s.dataUrl}" alt="${s.label}" /></a>`
   ).join("");
 }
 
@@ -905,7 +905,7 @@ function renderDayLegend(activeKeys) {
 /* ---- 12. CSV-Export --------------------------------------------------- */
 function exportCsv() {
   const lines = [];
-  lines.push("# Fenster-Watch Export – " + new Date().toLocaleString("de-DE"));
+  lines.push("# StreetPulse Export – " + new Date().toLocaleString("de-DE"));
   lines.push("# Gesamtzählung:");
   for (const key of CATEGORY_KEYS) {
     lines.push(`# ${CATEGORIES[key].label};${totals[key]}`);
@@ -926,7 +926,7 @@ function exportCsv() {
   const a = document.createElement("a");
   a.href = url;
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-  a.download = `fenster-watch_${stamp}.csv`;
+  a.download = `streetpulse_${stamp}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }

@@ -1,9 +1,9 @@
 /**
- * Schlanker localStorage-Wrapper für Fenster-Watch.
+ * Schlanker localStorage-Wrapper für StreetPulse.
  * Alles unter einem Schlüssel gebündelt; robust gegen deaktivierten Speicher
  * (z.B. privater Modus) – dann arbeitet die App einfach ohne Persistenz weiter.
  */
-const KEY = "fensterwatch.v1";
+const KEY = "streetpulse.v1";
 
 function readAll() {
   try {

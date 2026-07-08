@@ -1,4 +1,4 @@
-# 🪟 Fenster-Watch
+# 🚦 StreetPulse
 
 Eine kleine Web-App, die durch deine Webcam auf die Straße vor dem Fenster schaut
 und automatisch mitzählt, was dort passiert: **Autos, Fußgänger, Fahrräder,
@@ -69,4 +69,4 @@ einmaligen Laden des KI-Modells über das CDN).
 
 ---
 
-*Fenster-Watch · Proof of Concept*
+*StreetPulse · Proof of Concept*
