@@ -84,6 +84,7 @@
         <button id="btnLineClear" class="tool-btn tool-btn--clear" title="Zähllinie entfernen" hidden>✕</button>
         <button id="btnCalib" class="tool-btn" title="Tempo präzise kalibrieren: Strecke mit bekannter Länge markieren">📏 Kalibrieren</button>
         <button id="btnCalibClear" class="tool-btn tool-btn--clear" title="Kalibrierung entfernen" hidden>✕</button>
+        <button id="btnAutoCalib" class="tool-btn" title="Schätzt den Maßstab automatisch aus erkannten Autos (ca. 2 m Breite)">🎯 Auto-Kalib.</button>
       </div>
       <div class="video-wrap">
         <video id="video" playsinline muted></video>
@@ -118,6 +119,16 @@
       </p>
     </div>
   </main>
+
+  <!-- Intelligente Zusammenfassung (lokal aus den Daten erzeugt) -->
+  <section class="panel panel--summary">
+    <div class="summary-head">
+      <h2>🧠 Intelligente Zusammenfassung <span class="subtle">(automatisch aus deinen Daten)</span></h2>
+      <button id="btnSummary" class="btn">↻ Aktualisieren</button>
+    </div>
+    <p id="summaryText" class="summary-text">Noch keine Auswertung – starte die Beobachtung.</p>
+    <div id="anomalyBadge" class="anomaly-badge" hidden></div>
+  </section>
 
   <section class="grid grid--bottom">
     <!-- Verlaufs-Diagramm -->

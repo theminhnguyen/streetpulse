@@ -61,6 +61,8 @@ const els = {
   spdMax: $("spdMax"), spdOver: $("spdOver"),
   alarmNotify: $("alarmNotify"), alarmBackground: $("alarmBackground"), notifyHint: $("notifyHint"),
   schedOn: $("schedOn"), schedFrom: $("schedFrom"), schedTo: $("schedTo"), schedStatus: $("schedStatus"),
+  btnSummary: $("btnSummary"), summaryText: $("summaryText"), anomalyBadge: $("anomalyBadge"),
+  btnAutoCalib: $("btnAutoCalib"),
 };
 
 /* ---- 4. Zustand ------------------------------------------------------- */
@@ -331,6 +333,7 @@ function processDetections(predictions, now, dt) {
   }
   // Beobachtungs-Zone: Detektionen außerhalb des Bereichs ignorieren.
   if (zone) dets = dets.filter((d) => inZone(d.bbox));
+  if (autoCalibActive) collectAutoCalib(dets);
 
   // Kalibrierung: entweder 2-Punkt-Referenz oder Slider „Straßenbreite".
   tracker.setFrameSize(video.videoWidth, video.videoHeight);
@@ -1189,6 +1192,140 @@ function renderWeekLegend(activeKeys) {
     : `<span class="subtle">Noch keine Tagesdaten gespeichert.</span>`;
 }
 
+/* ---- 11f. Muster lernen: Insights, Anomalie, Vorhersage ------------- */
+function computeInsights() {
+  const dateKeys = Object.keys(days).sort();
+  const today = dateStr(new Date());
+  const todayData = days[today] || null;
+  const pastKeys = dateKeys.filter((k) => k !== today);
+  const catSum = (o) => CATEGORY_KEYS.reduce((s, c) => s + ((o && o[c]) || 0), 0);
+
+  // Durchschnittliches Stundenmuster aus den Vortagen -> "gelerntes" Normalmuster
+  const hourlyAvg = Array(24).fill(0);
+  if (pastKeys.length) {
+    for (let h = 0; h < 24; h++) {
+      let sum = 0;
+      for (const k of pastKeys) sum += catSum(days[k].hourly[h]);
+      hourlyAvg[h] = sum / pastKeys.length;
+    }
+  }
+
+  const todayTotal = todayData ? catSum(todayData.totals) : 0;
+  const pastTotals = pastKeys.map((k) => catSum(days[k].totals));
+  const avgPastTotal = pastTotals.length ? pastTotals.reduce((a, b) => a + b, 0) / pastTotals.length : null;
+
+  let peakHour = null, peakVal = 0;
+  if (todayData) for (let h = 0; h < 24; h++) {
+    const v = catSum(todayData.hourly[h]);
+    if (v > peakVal) { peakVal = v; peakHour = h; }
+  }
+
+  // Typische Stoßzeiten = Stunden mit dem höchsten Durchschnitt
+  const rushHours = hourlyAvg.map((v, h) => ({ h, v })).filter((x) => x.v > 0)
+    .sort((a, b) => b.v - a.v).slice(0, 2).map((x) => x.h).sort((a, b) => a - b);
+
+  // Anomalie: laufende Stunde vs. gelernte Erwartung
+  let anomaly = null;
+  if (pastKeys.length >= 2 && todayData) {
+    const h = new Date().getHours();
+    const actual = catSum(todayData.hourly[h]);
+    const expected = hourlyAvg[h];
+    if (expected >= 3) {
+      const ratio = actual / expected;
+      if (ratio >= 1.8) anomaly = { type: "hoch", hour: h, actual, expected: Math.round(expected) };
+      else if (ratio <= 0.4) anomaly = { type: "niedrig", hour: h, actual, expected: Math.round(expected) };
+    }
+  }
+
+  return { todayData, todayTotal, avgPastTotal, peakHour, peakVal, hourlyAvg, rushHours, anomaly, nPastDays: pastKeys.length };
+}
+
+// Klartext-Bericht (lokal aus den Daten – kein Cloud-Dienst nötig)
+function generateSummaryText() {
+  const ins = computeInsights();
+  const st = speedStats();
+  const d = currentDay();
+  if (ins.todayTotal === 0) {
+    return { text: "Heute wurden noch keine Objekte gezählt. Sobald die Beobachtung läuft, erscheint hier eine automatische Auswertung.", anomaly: null };
+  }
+  const p = [];
+  p.push(`Heute (${d.date}) wurden bisher ${ins.todayTotal} Objekte erfasst.`);
+  if (ins.avgPastTotal != null) {
+    const diff = Math.round((ins.todayTotal / ins.avgPastTotal - 1) * 100);
+    p.push(Math.abs(diff) >= 15
+      ? `Das sind rund ${Math.abs(diff)} % ${diff > 0 ? "mehr" : "weniger"} als der Schnitt der letzten ${ins.nPastDays} Tage.`
+      : `Das liegt etwa im Schnitt der letzten ${ins.nPastDays} Tage.`);
+  }
+  const cats = CATEGORY_KEYS.map((k) => ({ k, n: d.totals[k] || 0 })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+  if (cats.length) p.push(`Am häufigsten: ${cats.slice(0, 3).map((x) => `${x.n}× ${CATEGORIES[x.k].label}`).join(", ")}.`);
+  if (ins.peakHour != null && ins.peakVal > 0) p.push(`Am meisten los war es gegen ${ins.peakHour}–${ins.peakHour + 1} Uhr.`);
+  if (st) {
+    p.push(`Fahrzeuge fuhren im Schnitt etwa ${st.avg} km/h (85-%-Wert ${st.p85}, Spitze ${st.max} km/h).`);
+    if (st.overPct > 0) p.push(`${st.overPct} % waren schneller als ${st.limit} km/h${st.overPct >= 20 ? " – auffällig viele" : ""}.`);
+  }
+  if (ins.rushHours.length) p.push(`Typische Stoßzeiten laut Historie: ${ins.rushHours.map((h) => `${h}–${h + 1} Uhr`).join(" und ")}.`);
+  return { text: p.join(" "), anomaly: ins.anomaly };
+}
+
+function updateSummary() {
+  const { text, anomaly } = generateSummaryText();
+  els.summaryText.textContent = text;
+  if (anomaly) {
+    els.anomalyBadge.hidden = false;
+    els.anomalyBadge.textContent = anomaly.type === "hoch"
+      ? `⚠ Gerade ungewöhnlich viel Verkehr (${anomaly.actual} statt sonst ~${anomaly.expected} um diese Zeit).`
+      : `ℹ Gerade ungewöhnlich wenig Verkehr (${anomaly.actual} statt sonst ~${anomaly.expected} um diese Zeit).`;
+  } else {
+    els.anomalyBadge.hidden = true;
+  }
+}
+
+/* ---- 11g. Auto-Kalibrierung aus erkannten Autos --------------------- */
+let autoCalibActive = false;
+let autoCalibSamples = [];
+let autoCalibUntil = 0;
+const ASSUMED_CAR_WIDTH_M = 2.0; // grobe reale Breite/Perspektive eines Autos
+
+function startAutoCalib() {
+  if (!running || !video.videoWidth) { showToolHint("Bitte zuerst Kamera oder Video starten."); return; }
+  autoCalibActive = true;
+  autoCalibSamples = [];
+  autoCalibUntil = performance.now() + 8000;
+  showToolHint("🎯 Auto-Kalibrierung läuft … Autos vorbeifahren lassen (ca. 8 s).");
+}
+
+function collectAutoCalib(dets) {
+  for (const d of dets) if (d.class === "car") autoCalibSamples.push(d.bbox[2]);
+  if (performance.now() > autoCalibUntil) finishAutoCalib();
+}
+
+function finishAutoCalib() {
+  autoCalibActive = false;
+  if (autoCalibSamples.length < 4) {
+    showToolHint("⚠ Zu wenige Autos erkannt – bitte erneut versuchen.", 3500);
+    return;
+  }
+  autoCalibSamples.sort((a, b) => a - b);
+  const median = autoCalibSamples[Math.floor(autoCalibSamples.length / 2)];
+  const roadWidth = Math.max(3, Math.min(60, Math.round(ASSUMED_CAR_WIDTH_M * video.videoWidth / median)));
+  calib = null; storage.remove("calib"); // 2-Punkt-Kalibrierung aufheben -> Slider gilt
+  els.calibSlider.value = roadWidth;
+  els.calibVal.innerHTML = roadWidth + "&nbsp;m";
+  calibShowUntil = performance.now() + 3000;
+  updateToolButtons();
+  drawOverlay(lastTracks);
+  showToolHint(`🎯 Auto-kalibriert: Bildbreite ≈ ${roadWidth} m (aus ${autoCalibSamples.length} Autos).`, 4500);
+}
+
+// Kurz einen Hinweis im Banner zeigen.
+let toolHintTimer = null;
+function showToolHint(text, ms) {
+  els.toolHint.textContent = text;
+  els.toolHint.hidden = false;
+  clearTimeout(toolHintTimer);
+  if (ms) toolHintTimer = setTimeout(() => { if (!editMode) els.toolHint.hidden = true; }, ms);
+}
+
 /* ---- 11e. Teilbarer Report (PNG) ------------------------------------ */
 function generateReport() {
   drawDayChart(); drawWeekChart(); drawSpeedStats(); // Diagramme aktuell halten
@@ -1196,7 +1333,7 @@ function generateReport() {
   const st = speedStats();
   const W = 900, P = 36;
   const c = document.createElement("canvas");
-  c.width = W; c.height = 1180;
+  c.width = W; c.height = 1310;
   const x = c.getContext("2d");
   x.fillStyle = "#0e1117"; x.fillRect(0, 0, W, c.height);
   x.textBaseline = "top";
@@ -1206,6 +1343,17 @@ function generateReport() {
   x.fillText("StreetPulse – Verkehrs-Report", P, 34);
   x.fillStyle = "#93a1b3"; x.font = "15px -apple-system, system-ui, sans-serif";
   x.fillText(`Erstellt am ${new Date().toLocaleString("de-DE")}  ·  Beobachtungstag: ${d.date}`, P, 76);
+
+  // Zusammenfassung in Klartext (umbrochen)
+  x.fillStyle = "#c8d3e0"; x.font = "15px -apple-system, system-ui, sans-serif";
+  let sy = 108;
+  let line = "";
+  for (const word of generateSummaryText().text.split(" ")) {
+    const test = line ? line + " " + word : word;
+    if (x.measureText(test).width > W - 2 * P && line) { x.fillText(line, P, sy); sy += 23; line = word; }
+    else line = test;
+  }
+  if (line) { x.fillText(line, P, sy); sy += 23; }
 
   const header = (title, y) => {
     x.fillStyle = "#e6edf3"; x.font = "600 19px -apple-system, system-ui, sans-serif";
@@ -1224,7 +1372,7 @@ function generateReport() {
   };
 
   // Zählung heute
-  let y = header("Zählung heute", 116);
+  let y = header("Zählung heute", sy + 12);
   const cols = 4, gap = 10, cw = (W - 2 * P - (cols - 1) * gap) / cols;
   CATEGORY_KEYS.forEach((k, i) => {
     const cx = P + (i % cols) * (cw + gap);
@@ -1404,6 +1552,8 @@ function bindEvents() {
   els.btnCalibClear.addEventListener("click", () => {
     calib = null; storage.remove("calib"); updateToolButtons(); drawOverlay(lastTracks);
   });
+  els.btnAutoCalib.addEventListener("click", startAutoCalib);
+  els.btnSummary.addEventListener("click", updateSummary);
   overlay.addEventListener("pointerdown", onPointerDown);
   overlay.addEventListener("pointermove", onPointerMove);
   overlay.addEventListener("pointerup", onPointerUp);
@@ -1469,9 +1619,11 @@ function init() {
   drawDayChart();
   drawWeekChart();
   drawSpeedStats();
+  updateSummary();
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
   setInterval(checkSchedule, 15000);
+  setInterval(updateSummary, 20000);
   loadModel();
 }
 
