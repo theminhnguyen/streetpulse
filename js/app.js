@@ -63,6 +63,8 @@ const els = {
   schedOn: $("schedOn"), schedFrom: $("schedFrom"), schedTo: $("schedTo"), schedStatus: $("schedStatus"),
   btnSummary: $("btnSummary"), summaryText: $("summaryText"), anomalyBadge: $("anomalyBadge"),
   btnAutoCalib: $("btnAutoCalib"), btnTheme: $("btnTheme"),
+  btnCollect: $("btnCollect"), collectInterval: $("collectInterval"), collectCount: $("collectCount"),
+  btnCollectZip: $("btnCollectZip"), btnCollectClear: $("btnCollectClear"),
 };
 
 /* ---- Theme (hell/dunkel) --------------------------------------------- */
@@ -353,6 +355,10 @@ function processDetections(predictions, now, dt) {
   // Beobachtungs-Zone: Detektionen außerhalb des Bereichs ignorieren.
   if (zone) dets = dets.filter((d) => inZone(d.bbox));
   if (autoCalibActive) collectAutoCalib(dets);
+  if (collecting && !paused) {
+    const iv = (Number(els.collectInterval.value) || 4) * 1000;
+    if (now - lastCollectTs >= iv) { lastCollectTs = now; captureFrame(dets); }
+  }
 
   // Kalibrierung: entweder 2-Punkt-Referenz oder Slider „Straßenbreite".
   tracker.setFrameSize(video.videoWidth, video.videoHeight);
@@ -1345,6 +1351,89 @@ function showToolHint(text, ms) {
   if (ms) toolHintTimer = setTimeout(() => { if (!editMode) els.toolHint.hidden = true; }, ms);
 }
 
+/* ---- 11h. Trainingsdaten sammeln (IndexedDB + YOLO-Export) ---------- */
+let _idb = null;
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (_idb) return resolve(_idb);
+    const req = indexedDB.open("streetpulse-frames", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("frames", { keyPath: "id", autoIncrement: true });
+    req.onsuccess = () => { _idb = req.result; resolve(_idb); };
+    req.onerror = () => reject(req.error);
+  });
+}
+function idbTx(mode, fn) {
+  return idbOpen().then((db) => new Promise((res, rej) => {
+    const tx = db.transaction("frames", mode);
+    const r = fn(tx.objectStore("frames"));
+    tx.oncomplete = () => res(r ? r.result : undefined);
+    tx.onerror = () => rej(tx.error);
+  }));
+}
+const idbAdd = (obj) => idbTx("readwrite", (s) => s.add(obj));
+const idbGetAll = () => idbTx("readonly", (s) => s.getAll());
+const idbCount = () => idbTx("readonly", (s) => s.count());
+const idbClear = () => idbTx("readwrite", (s) => s.clear());
+
+let collecting = false;
+let lastCollectTs = 0;
+let collectCount = 0;
+
+async function updateCollectCount() {
+  try { collectCount = await idbCount(); } catch { collectCount = 0; }
+  els.collectCount.textContent = `${collectCount} Bild${collectCount === 1 ? "" : "er"}`;
+}
+
+function toggleCollect() {
+  collecting = !collecting;
+  els.btnCollect.textContent = collecting ? "⏹ Sammeln stoppen" : "📸 Sammeln starten";
+  els.btnCollect.classList.toggle("is-collecting", collecting);
+  if (collecting && (!running || paused)) showToolHint("Tipp: Kamera oder Video starten, damit Bilder gesammelt werden.", 4000);
+}
+
+// Aktuellen Frame samt Vor-Markierungen (YOLO) sichern – nur Frames mit Objekten.
+function captureFrame(dets) {
+  if (!video.videoWidth || !dets.length) return;
+  const c = document.createElement("canvas");
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+  const labels = dets.map((d) => {
+    const id = CATEGORY_KEYS.indexOf(d.class);
+    const cx = (d.bbox[0] + d.bbox[2] / 2) / c.width;
+    const cy = (d.bbox[1] + d.bbox[3] / 2) / c.height;
+    return `${id} ${cx.toFixed(6)} ${cy.toFixed(6)} ${(d.bbox[2] / c.width).toFixed(6)} ${(d.bbox[3] / c.height).toFixed(6)}`;
+  }).join("\n");
+  idbAdd({ time: Date.now(), dataUrl: c.toDataURL("image/jpeg", 0.8), labels })
+    .then(updateCollectCount).catch((e) => console.error("Frame speichern:", e));
+}
+
+async function downloadTrainingZip() {
+  if (typeof JSZip === "undefined") { showToolHint("ZIP-Bibliothek nicht geladen – Seite neu laden.", 4000); return; }
+  const frames = await idbGetAll();
+  if (!frames || !frames.length) { showToolHint("Noch keine Trainingsbilder gesammelt.", 3500); return; }
+  const zip = new JSZip();
+  zip.file("classes.txt", CATEGORY_KEYS.join("\n"));
+  zip.file("data.yaml", `# StreetPulse-Trainingsdaten (YOLO-Format)\nnc: ${CATEGORY_KEYS.length}\nnames: [${CATEGORY_KEYS.map((k) => `'${k}'`).join(", ")}]\n`);
+  frames.forEach((f, i) => {
+    const n = String(i + 1).padStart(4, "0");
+    zip.file(`images/img_${n}.jpg`, f.dataUrl.split(",")[1], { base64: true });
+    zip.file(`labels/img_${n}.txt`, f.labels);
+  });
+  const blob = await zip.generateAsync({ type: "blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `streetpulse-training_${new Date().toISOString().slice(0, 10)}.zip`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function clearTrainingData() {
+  if (!collectCount) return;
+  if (!confirm(`${collectCount} gesammelte Trainingsbilder wirklich löschen?`)) return;
+  await idbClear();
+  updateCollectCount();
+}
+
 /* ---- 11e. Teilbarer Report (PNG) ------------------------------------ */
 function generateReport() {
   drawDayChart(); drawWeekChart(); drawSpeedStats(); // Diagramme aktuell halten
@@ -1574,6 +1663,9 @@ function bindEvents() {
   els.btnAutoCalib.addEventListener("click", startAutoCalib);
   els.btnSummary.addEventListener("click", updateSummary);
   els.btnTheme.addEventListener("click", toggleTheme);
+  els.btnCollect.addEventListener("click", toggleCollect);
+  els.btnCollectZip.addEventListener("click", downloadTrainingZip);
+  els.btnCollectClear.addEventListener("click", clearTrainingData);
   overlay.addEventListener("pointerdown", onPointerDown);
   overlay.addEventListener("pointermove", onPointerMove);
   overlay.addEventListener("pointerup", onPointerUp);
@@ -1637,6 +1729,7 @@ function init() {
   renderGallery();
   applyTheme(); // setzt Theme + zeichnet alle Diagramme mit den passenden Farben
   updateSummary();
+  updateCollectCount();
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
   setInterval(checkSchedule, 15000);

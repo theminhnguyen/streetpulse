@@ -6,6 +6,8 @@
 <!-- TensorFlow.js + COCO-SSD Objekterkennung (läuft lokal im Browser) -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<!-- JSZip: nur für den Export der Trainingsdaten als ZIP -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
 <link rel="stylesheet" href="css/style.css" />
 
@@ -74,7 +76,7 @@
     </div>
   </section>
 
-  <main class="grid">
+  <main class="grid grid--top">
     <!-- Kamerabild + Erkennungs-Overlay -->
     <div class="panel panel--video">
       <div class="video-tools">
@@ -215,6 +217,20 @@
       <div id="gallery" class="gallery">
         <p class="gallery-empty">Noch keine Aufnahmen. Bei einem Alarm wird automatisch ein Foto gespeichert (bleibt nur in dieser Sitzung).</p>
       </div>
+    </div>
+  </section>
+
+  <!-- Trainingsdaten sammeln (Schritt Richtung eigenes Modell) -->
+  <section class="panel panel--collect">
+    <h2>📸 Trainingsdaten sammeln <span class="subtle">(für ein eigenes Modell, z. B. E-Scooter)</span></h2>
+    <p class="panel-hint">Speichert automatisch Kamerabilder mit Vor-Markierungen im <b>YOLO-Format</b> – zum späteren Labeln und Trainieren. Alles bleibt lokal im Browser.</p>
+    <div class="collect-row">
+      <button id="btnCollect" class="btn">📸 Sammeln starten</button>
+      <label class="alarm-check">alle <input id="collectInterval" type="number" class="num-input" value="4" min="1" max="60" /> Sek.</label>
+      <span id="collectCount" class="collect-count">0 Bilder</span>
+      <span class="collect-spacer"></span>
+      <button id="btnCollectZip" class="btn">⬇ Als ZIP (YOLO)</button>
+      <button id="btnCollectClear" class="btn">🗑 Löschen</button>
     </div>
   </section>
 
