@@ -1,9 +1,10 @@
 # 🚦 StreetPulse
 
 Eine kleine Web-App, die durch deine Webcam auf die Straße vor dem Fenster schaut
-und automatisch mitzählt, was dort passiert: **Autos, Fußgänger, Fahrräder,
-Motorräder/Roller, Busse, LKW, Hunde und Katzen** – inklusive einer groben
-**Geschwindigkeits­schätzung** der Fahrzeuge.
+und automatisch mitzählt, was dort passiert: **Autos, Fußgänger und LKW** –
+inklusive einer groben **Geschwindigkeits­schätzung** der Fahrzeuge.
+(Bewusst auf diese drei Klassen reduziert, weil das Modell sie aus
+Fensterdistanz zuverlässig trifft.)
 
 > **Proof of Concept.** Läuft komplett **lokal im Browser** – es werden keine
 > Bilder oder Daten hochgeladen, es gibt keinen Server.
@@ -49,7 +50,7 @@ Motorräder/Roller, Busse, LKW, Hunde und Katzen** – inklusive einer groben
 
 - **[TensorFlow.js](https://www.tensorflow.org/js)** mit dem Modell
   **COCO-SSD** (`lite_mobilenet_v2`) – erkennt 80 Objektklassen, wir nutzen die
-  verkehrsrelevanten.
+  drei zuverlässigsten für Straßenverkehr (Person, Auto, LKW).
 - Reine **Client-Side-App** (HTML/CSS/JS, keine Build-Tools, keine Abhängigkeiten
   außer den beiden CDN-Skripten).
 - Eigener, schlanker **Objekt-Tracker** (`js/tracker.js`) für eindeutiges Zählen
@@ -59,8 +60,10 @@ Motorräder/Roller, Busse, LKW, Hunde und Katzen** – inklusive einer groben
 
 - **Geschwindigkeit** ist nur eine **grobe Schätzung**. Sie hängt stark vom
   Kamerawinkel und der Kalibrierung ab und ersetzt keine echte Messung.
-- **Tretroller / E-Scooter** haben keine eigene Modell-Klasse – sie werden meist
-  als „Person" oder gar nicht erkannt. Motor*roller* zählen als „Motorrad".
+- **Fahrräder, Roller, Busse und Tiere** wurden vom Modell aus typischer
+  Fensterdistanz kaum erkannt und sind deshalb ausgeblendet. Für eigene Klassen
+  (z. B. E-Scooter) gibt es die Funktion **„Trainingsdaten sammeln"** als
+  Grundlage für ein selbst trainiertes Modell.
 - Genauigkeit hängt von **Licht, Abstand und Blickwinkel** ab. Bei Dunkelheit,
   Regen oder sehr dichtem Verkehr sinkt die Trefferquote.
 - Die Gesamt-Zählung kann bei Verdeckungen gelegentlich doppelt zählen oder etwas

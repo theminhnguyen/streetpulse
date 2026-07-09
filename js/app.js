@@ -8,15 +8,12 @@ import { storage } from "./storage.js";
  * ========================================================================= */
 
 /* ---- 1. Kategorien: COCO-Klasse -> Anzeige ---------------------------- */
+// Auf die Klassen reduziert, die das Modell aus Fensterdistanz zuverlässig trifft.
+// (Busse/Fahrräder/Motorräder/Hunde/Katzen wurden kaum erkannt -> entfernt.)
 const CATEGORIES = {
-  person:     { label: "Fußgänger",         singular: "Fußgänger",       emoji: "🚶", color: "#4f9dff", vehicle: false },
-  car:        { label: "Autos",             singular: "Auto",            emoji: "🚗", color: "#34d399", vehicle: true  },
-  truck:      { label: "LKW",               singular: "LKW",             emoji: "🚚", color: "#fbbf24", vehicle: true  },
-  bus:        { label: "Busse",             singular: "Bus",             emoji: "🚌", color: "#f97316", vehicle: true  },
-  bicycle:    { label: "Fahrräder",         singular: "Fahrrad",         emoji: "🚲", color: "#38bdf8", vehicle: true  },
-  motorcycle: { label: "Motorräder/Roller", singular: "Motorrad/Roller", emoji: "🏍️", color: "#a78bfa", vehicle: true  },
-  dog:        { label: "Hunde",             singular: "Hund",            emoji: "🐕", color: "#f472b6", vehicle: false },
-  cat:        { label: "Katzen",            singular: "Katze",           emoji: "🐈", color: "#fb7185", vehicle: false },
+  person: { label: "Fußgänger", singular: "Fußgänger", emoji: "🚶", color: "#4f9dff", vehicle: false },
+  car:    { label: "Autos",     singular: "Auto",      emoji: "🚗", color: "#34d399", vehicle: true  },
+  truck:  { label: "LKW",       singular: "LKW",       emoji: "🚚", color: "#fbbf24", vehicle: true  },
 };
 const CATEGORY_KEYS = Object.keys(CATEGORIES);
 
@@ -1441,7 +1438,7 @@ function generateReport() {
   const st = speedStats();
   const W = 900, P = 36;
   const c = document.createElement("canvas");
-  c.width = W; c.height = 1310;
+  c.width = W; c.height = 1160;
   const x = c.getContext("2d");
   x.fillStyle = "#0e1117"; x.fillRect(0, 0, W, c.height);
   x.textBaseline = "top";
@@ -1487,7 +1484,7 @@ function generateReport() {
     const cy = y + Math.floor(i / cols) * (66 + gap);
     kpiCard(cx, cy, cw, d.totals[k] || 0, `${CATEGORIES[k].emoji} ${CATEGORIES[k].label}`, CATEGORIES[k].color);
   });
-  y += 2 * (66 + gap) + 12;
+  y += Math.ceil(CATEGORY_KEYS.length / cols) * (66 + gap) + 12;
 
   // Tempo-Statistik
   y = header("Geschwindigkeit" + (calib ? " (2-Punkt-kalibriert)" : " (grobe Schätzung)"), y);

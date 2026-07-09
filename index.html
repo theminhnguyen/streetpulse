@@ -1,7 +1,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>StreetPulse – Verkehr vor deiner Tür zählen</title>
-<meta name="description" content="Zählt per Webcam Autos, Fußgänger, Fahrräder, Roller, Hunde & Co. – komplett lokal im Browser." />
+<meta name="description" content="Zählt per Webcam Autos, Fußgänger und LKW – inklusive Tempo-Statistik, komplett lokal im Browser." />
 
 <!-- TensorFlow.js + COCO-SSD Objekterkennung (läuft lokal im Browser) -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
@@ -239,8 +239,8 @@
       <summary>ℹ️ Wie genau ist das? (bitte lesen)</summary>
       <div class="footer-body">
         <ul>
-          <li><b>Objekterkennung:</b> Nutzt das KI-Modell <i>COCO-SSD</i>. Es erkennt u.&nbsp;a. Personen, Autos, LKW, Busse, Fahrräder, Motorräder/Motorroller, Hunde und Katzen recht zuverlässig – abhängig von Licht, Abstand und Kamerawinkel.</li>
-          <li><b>Tretroller / E-Scooter:</b> Das Modell kennt keine eigene Klasse dafür. Sie werden meist als <i>Person</i> oder gar nicht erkannt. Motor<b>roller</b> laufen unter „Motorrad".</li>
+          <li><b>Objekterkennung:</b> Nutzt das KI-Modell <i>COCO-SSD</i>. Gezählt werden <b>Fußgänger, Autos und LKW</b> – die Klassen, die aus Fensterdistanz zuverlässig erkannt werden. Genauigkeit hängt von Licht, Abstand und Kamerawinkel ab.</li>
+          <li><b>Fahrräder, Roller, Busse, Tiere:</b> Wurden vom Modell aus typischer Fensterdistanz kaum getroffen und sind deshalb bewusst ausgeblendet. Für solche Klassen bräuchte es ein eigens trainiertes Modell – dafür gibt es die Funktion „Trainingsdaten sammeln".</li>
           <li><b>Geschwindigkeit:</b> Nur eine <b>grobe Schätzung</b>. Sie misst, wie schnell sich ein Objekt über das Bild bewegt, und rechnet das mit deiner „Straßenbreite im Bild"-Angabe in km/h um. Perspektive und Kamerawinkel verfälschen das – für einen exakten Wert bräuchte es eine echte Kalibrierung.</li>
           <li><b>Gesamt-Zählung:</b> Beruht auf einfachem Objekt-Tracking. Bei dichtem Verkehr oder Verdeckungen kann es doppelt zählen oder etwas übersehen.</li>
           <li><b>Datenschutz:</b> Das Video verlässt niemals deinen Rechner. Es gibt keinen Server – alles passiert im Browser.</li>
