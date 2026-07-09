@@ -62,8 +62,27 @@ const els = {
   alarmNotify: $("alarmNotify"), alarmBackground: $("alarmBackground"), notifyHint: $("notifyHint"),
   schedOn: $("schedOn"), schedFrom: $("schedFrom"), schedTo: $("schedTo"), schedStatus: $("schedStatus"),
   btnSummary: $("btnSummary"), summaryText: $("summaryText"), anomalyBadge: $("anomalyBadge"),
-  btnAutoCalib: $("btnAutoCalib"),
+  btnAutoCalib: $("btnAutoCalib"), btnTheme: $("btnTheme"),
 };
+
+/* ---- Theme (hell/dunkel) --------------------------------------------- */
+let theme = storage.get("theme", "dark");
+const THEME = { grid: "#2b3444", axisText: "#64748b" }; // wird aus CSS gefüllt
+function applyTheme() {
+  document.documentElement.setAttribute("data-theme", theme);
+  const cs = getComputedStyle(document.documentElement);
+  THEME.grid = cs.getPropertyValue("--chart-grid").trim() || THEME.grid;
+  THEME.axisText = cs.getPropertyValue("--chart-text").trim() || THEME.axisText;
+  els.btnTheme.textContent = theme === "light" ? "☀️" : "🌙";
+  // Alle Canvas-Diagramme mit den neuen Farben neu zeichnen
+  try { drawChart(); drawDayChart(); drawWeekChart(); drawSpeedStats(); } catch {}
+  if (video.videoWidth) drawOverlay(lastTracks);
+}
+function toggleTheme() {
+  theme = theme === "light" ? "dark" : "light";
+  storage.set("theme", theme);
+  applyTheme();
+}
 
 /* ---- 4. Zustand ------------------------------------------------------- */
 let model = null;
@@ -940,8 +959,8 @@ function drawChart() {
   maxVal = Math.ceil(maxVal);
 
   // Gitter + Y-Achse.
-  cctx.strokeStyle = "#2b3444";
-  cctx.fillStyle = "#64748b";
+  cctx.strokeStyle = THEME.grid;
+  cctx.fillStyle = THEME.axisText;
   cctx.lineWidth = 1;
   cctx.font = "11px -apple-system, system-ui, sans-serif";
   cctx.textBaseline = "middle";
@@ -1011,8 +1030,8 @@ function drawDayChart() {
   maxVal = Math.ceil(maxVal);
 
   // Gitter + Y-Achse
-  dctx.strokeStyle = "#2b3444";
-  dctx.fillStyle = "#64748b";
+  dctx.strokeStyle = THEME.grid;
+  dctx.fillStyle = THEME.axisText;
   dctx.font = "11px -apple-system, system-ui, sans-serif";
   dctx.textBaseline = "middle";
   dctx.lineWidth = 1;
@@ -1039,7 +1058,7 @@ function drawDayChart() {
   }
 
   // X-Achse (Stunden)
-  dctx.fillStyle = "#64748b";
+  dctx.fillStyle = THEME.axisText;
   dctx.textBaseline = "alphabetic";
   dctx.textAlign = "center";
   for (let hr = 0; hr <= 24; hr += 6) {
@@ -1127,7 +1146,7 @@ function drawSpeedHistogram(st) {
   spctx.beginPath(); spctx.moveTo(lx, padT); spctx.lineTo(lx, padT + plotH); spctx.stroke();
   spctx.setLineDash([]);
   // Achse
-  spctx.fillStyle = "#64748b"; spctx.font = "11px -apple-system, system-ui, sans-serif";
+  spctx.fillStyle = THEME.axisText; spctx.font = "11px -apple-system, system-ui, sans-serif";
   spctx.textBaseline = "alphabetic"; spctx.textAlign = "center";
   for (let s = 0; s <= maxSpeed; s += 20) spctx.fillText(String(s), padL + (s / maxSpeed) * plotW, h - 5);
   spctx.textAlign = "right"; spctx.fillText("km/h", w - 2, h - 5); spctx.textAlign = "left";
@@ -1154,7 +1173,7 @@ function drawWeekChart() {
   maxVal = Math.ceil(maxVal);
   const activeKeys = CATEGORY_KEYS.filter((k) => dateKeys.some((dk) => dayTotal(dk, k) > 0));
 
-  wctx.strokeStyle = "#2b3444"; wctx.fillStyle = "#64748b";
+  wctx.strokeStyle = THEME.grid; wctx.fillStyle = THEME.axisText;
   wctx.font = "11px -apple-system, system-ui, sans-serif"; wctx.textBaseline = "middle"; wctx.lineWidth = 1;
   for (let i = 0; i <= 2; i++) {
     const val = Math.round((maxVal / 2) * i);
@@ -1176,7 +1195,7 @@ function drawWeekChart() {
     }
     if (dateKeys.length <= 10 || i === 0 || i === dateKeys.length - 1) {
       const [, mo, da] = dk.split("-");
-      wctx.fillStyle = "#64748b"; wctx.textAlign = "center"; wctx.textBaseline = "alphabetic";
+      wctx.fillStyle = THEME.axisText; wctx.textAlign = "center"; wctx.textBaseline = "alphabetic";
       wctx.fillText(`${da}.${mo}.`, x + bw / 2, h - 6);
       wctx.textAlign = "left";
     }
@@ -1554,6 +1573,7 @@ function bindEvents() {
   });
   els.btnAutoCalib.addEventListener("click", startAutoCalib);
   els.btnSummary.addEventListener("click", updateSummary);
+  els.btnTheme.addEventListener("click", toggleTheme);
   overlay.addEventListener("pointerdown", onPointerDown);
   overlay.addEventListener("pointermove", onPointerMove);
   overlay.addEventListener("pointerup", onPointerUp);
@@ -1615,10 +1635,7 @@ function init() {
   updateDirectionBar();
   updateToolButtons();       // gespeicherte Zone/Linie in den Buttons spiegeln
   renderGallery();
-  drawChart();
-  drawDayChart();
-  drawWeekChart();
-  drawSpeedStats();
+  applyTheme(); // setzt Theme + zeichnet alle Diagramme mit den passenden Farben
   updateSummary();
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
