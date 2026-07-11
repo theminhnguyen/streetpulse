@@ -22,7 +22,7 @@ Fensterdistanz zuverlässig trifft.)
 - **Report als Bild (PNG)** mit allen Kennzahlen und Diagrammen – zum Teilen (z. B. mit Stadt/Nachbarschaft)
 - **Backup-Export/-Import**: Historie und Einstellungen als Datei sichern und wiederherstellen
 - **Alarm** bei bestimmten Objekten oder ab einem Tempo – mit Ton und automatischem **Schnappschuss**
-- **Genauigkeits-Umschalter** (schnelles oder genaueres Erkennungsmodell)
+- **Genauigkeits-Umschalter**: schnelles/genaueres COCO-SSD **oder experimentell YOLOv8-Nano** (selbst gehostet im Repo, ~13 MB einmaliger Download, deutlich genauer laut offiziellen Benchmarks, aber langsamer)
 - **Ereignis-Log** und **CSV-Export** (inklusive Richtung und Messmethode)
 - **Automatische Pause**, wenn der Browser-Tab in den Hintergrund wechselt
 - Einstellungen lokal gespeichert (localStorage); die **Tages-Historie liegt in IndexedDB** (robuster, kein Größenlimit wie bei localStorage) – ideal für Dauerbetrieb über mehrere Tage
@@ -58,8 +58,13 @@ Fensterdistanz zuverlässig trifft.)
 - **[TensorFlow.js](https://www.tensorflow.org/js)** mit dem Modell
   **COCO-SSD** (`lite_mobilenet_v2`) – erkennt 80 Objektklassen, wir nutzen die
   drei zuverlässigsten für Straßenverkehr (Person, Auto, LKW).
+- Optional **YOLOv8-Nano** über **[ONNX Runtime Web](https://onnxruntime.ai/)**
+  (`js/yolo.js`: Letterbox-Preprocessing, Decode + klassenweises NMS von Hand
+  implementiert, da der Standard-Export kein eingebautes NMS hat). Die
+  Modelldatei liegt selbst gehostet unter `models/yolov8n.onnx` im Repo –
+  keine Laufzeit-Abhängigkeit von Drittservern zur Erkennung selbst.
 - Reine **Client-Side-App** (HTML/CSS/JS, keine Build-Tools, keine Abhängigkeiten
-  außer den beiden CDN-Skripten).
+  außer den CDN-Skripten für TensorFlow.js/ONNX Runtime/JSZip).
 - Eigener, schlanker **Objekt-Tracker** (`js/tracker.js`) für eindeutiges Zählen
   und die Bewegungs-/Geschwindigkeits­schätzung.
 
@@ -80,6 +85,10 @@ Fensterdistanz zuverlässig trifft.)
   Regen oder sehr dichtem Verkehr sinkt die Trefferquote.
 - Die Gesamt-Zählung kann bei Verdeckungen gelegentlich doppelt zählen oder etwas
   übersehen.
+- **🚀 YOLO-Modus (experimentell):** technisch verifiziert (lädt, läuft, liefert
+  korrekt geformte Ergebnisse), aber die reale Treffergenauigkeit an echten
+  Straßenszenen wurde nicht unabhängig gegen COCO-SSD verglichen. Deutlich
+  langsamer (spürbar weniger Bilder pro Sekunde) und ein einmaliger ~13-MB-Download.
 
 ## 🔒 Datenschutz
 
