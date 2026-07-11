@@ -1,5 +1,6 @@
 import { ObjectTracker } from "./tracker.js";
 import { storage } from "./storage.js";
+import { loadYolo } from "./yolo.js";
 
 /* =========================================================================
  * StreetPulse – Hauptlogik
@@ -222,17 +223,30 @@ function setReadyStatus() {
 
 async function loadModel(attempt = 1) {
   if (model || modelLoading) return;
-  if (typeof cocoSsd === "undefined") {
+  const isYolo = modelBase === "yolo";
+  if (!isYolo && typeof cocoSsd === "undefined") {
     // KI-Bibliothek (CDN) nicht verfügbar – z.B. offline beim ersten Aufruf.
     setStatus("KI-Bibliothek nicht erreichbar – hier klicken für neuen Versuch", "error");
     els.status.style.cursor = "pointer";
     return;
   }
+  if (isYolo && typeof ort === "undefined") {
+    setStatus("ONNX-Bibliothek nicht erreichbar – hier klicken für neuen Versuch", "error");
+    els.status.style.cursor = "pointer";
+    return;
+  }
   modelLoading = true;
   els.status.style.cursor = "default";
-  setStatus(attempt === 1 ? "Modell wird geladen …" : `Modell wird geladen … (Versuch ${attempt})`, "loading");
+  setStatus(
+    attempt === 1
+      ? (isYolo ? "YOLO-Modell wird geladen … (~13 MB, einmalig)" : "Modell wird geladen …")
+      : `Modell wird geladen … (Versuch ${attempt})`,
+    "loading"
+  );
   try {
-    model = await cocoSsd.load({ base: modelBase });
+    model = isYolo
+      ? await loadYolo("models/yolov8n.onnx", CATEGORY_KEYS)
+      : await cocoSsd.load({ base: modelBase });
     modelLoading = false;
     els.btnCamera.disabled = false;
     setReadyStatus();

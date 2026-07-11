@@ -6,6 +6,8 @@
 <!-- TensorFlow.js + COCO-SSD Objekterkennung (läuft lokal im Browser) -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<!-- ONNX Runtime Web: nur für den optionalen, genaueren YOLO-Modus (models/yolov8n.onnx im Repo) -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
 <!-- JSZip: nur für den Export der Trainingsdaten als ZIP -->
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
@@ -35,11 +37,12 @@
       <button id="btnCamera" class="btn btn--primary">📷 Kamera starten</button>
       <button id="btnPause" class="btn" disabled>⏸ Pause</button>
       <select id="cameraSelect" class="select" title="Kamera auswählen" hidden></select>
-      <label class="inline-select" title="„Genau" erkennt mehr Objekte, braucht aber mehr Rechenleistung.">
+      <label class="inline-select" title="„Genau" erkennt mehr Objekte, braucht aber mehr Rechenleistung. „YOLO" ist experimentell: vermutlich nochmal genauer, aber einmaliger ~13-MB-Download und langsamer.">
         <span>Genauigkeit</span>
         <select id="modelSelect" class="select">
           <option value="lite_mobilenet_v2">Schnell</option>
           <option value="mobilenet_v2">Genau</option>
+          <option value="yolo">🚀 YOLO (experimentell)</option>
         </select>
       </label>
     </div>
@@ -253,9 +256,10 @@
       <summary>ℹ️ Wie genau ist das? (bitte lesen)</summary>
       <div class="footer-body">
         <ul>
-          <li><b>Objekterkennung:</b> Nutzt das KI-Modell <i>COCO-SSD</i>. Gezählt werden <b>Fußgänger, Autos und LKW</b> – die Klassen, die aus Fensterdistanz zuverlässig erkannt werden. Genauigkeit hängt von Licht, Abstand und Kamerawinkel ab.</li>
-          <li><b>Fahrräder, Roller, Busse, Tiere:</b> Wurden vom Modell aus typischer Fensterdistanz kaum getroffen und sind deshalb bewusst ausgeblendet. Für solche Klassen bräuchte es ein eigens trainiertes Modell – dafür gibt es die Funktion „Trainingsdaten sammeln".</li>
-          <li><b>Geschwindigkeit:</b> Nur eine <b>grobe Schätzung</b>. Sie misst, wie schnell sich ein Objekt über das Bild bewegt, und rechnet das mit deiner „Straßenbreite im Bild"-Angabe in km/h um. Perspektive und Kamerawinkel verfälschen das – für einen exakten Wert bräuchte es eine echte Kalibrierung.</li>
+          <li><b>Objekterkennung:</b> Standardmäßig das KI-Modell <i>COCO-SSD</i>. Gezählt werden <b>Fußgänger, Autos und LKW</b> – die Klassen, die aus Fensterdistanz zuverlässig erkannt werden. Genauigkeit hängt von Licht, Abstand und Kamerawinkel ab.</li>
+          <li><b>🚀 YOLO (experimentell):</b> Alternative unter „Genauigkeit" – ein selbst gehostetes YOLOv8-Nano-Modell (kein Fremdserver zur Laufzeit), das laut offiziellen Benchmarks deutlich genauer als COCO-SSD ist. Einmaliger Download von ca. 13&nbsp;MB, mehr Rechenlast, dadurch tendenziell weniger Bilder pro Sekunde. Die reale Treffergenauigkeit an deiner Straße lässt sich nur im eigenen Einsatz beurteilen.</li>
+          <li><b>Fahrräder, Roller, Busse, Tiere:</b> Wurden von den Standard-Modellen aus typischer Fensterdistanz kaum getroffen und sind deshalb bewusst ausgeblendet. Für solche Klassen bräuchte es ein eigens trainiertes Modell – dafür gibt es die Funktion „Trainingsdaten sammeln".</li>
+          <li><b>Geschwindigkeit:</b> Ohne Tempo-Gate nur eine <b>grobe Schätzung</b> anhand der Bildbewegung. Mit <b>📏 Kalibrieren</b> (eine Strecke bekannter Länge) oder noch besser <b>⏱ Tempo-Gate</b> (zwei Linien mit bekanntem Abstand, perspektiv-unabhängig) wird sie deutlich belastbarer – ersetzt aber weiterhin keine geeichte Messung.</li>
           <li><b>Gesamt-Zählung:</b> Beruht auf einfachem Objekt-Tracking. Bei dichtem Verkehr oder Verdeckungen kann es doppelt zählen oder etwas übersehen.</li>
           <li><b>Datenschutz:</b> Das Video verlässt niemals deinen Rechner. Es gibt keinen Server – alles passiert im Browser.</li>
         </ul>
