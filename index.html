@@ -88,6 +88,8 @@
         <button id="btnCalib" class="tool-btn" title="Tempo präzise kalibrieren: Strecke mit bekannter Länge markieren">📏 Kalibrieren</button>
         <button id="btnCalibClear" class="tool-btn tool-btn--clear" title="Kalibrierung entfernen" hidden>✕</button>
         <button id="btnAutoCalib" class="tool-btn" title="Schätzt den Maßstab automatisch aus erkannten Autos (ca. 2 m Breite)">🎯 Auto-Kalib.</button>
+        <button id="btnGate" class="tool-btn" title="Präzises Tempo per Zwei-Linien-Messung (Lichtschranken-Prinzip) – unabhängig von der Perspektive">⏱ Tempo-Gate</button>
+        <button id="btnGateClear" class="tool-btn tool-btn--clear" title="Tempo-Gate entfernen" hidden>✕</button>
       </div>
       <div class="video-wrap">
         <video id="video" playsinline muted></video>
@@ -154,6 +156,7 @@
       <span class="subtle">(heute, Erkennungen pro Stunde)</span>
       <button id="btnDayClear" class="link-btn" title="Heute gespeicherte Daten löschen">löschen</button>
     </h2>
+    <div id="coverageBadge" class="coverage-badge"></div>
     <canvas id="dayChart"></canvas>
     <div id="dayLegend" class="chart-legend"></div>
   </section>
@@ -231,6 +234,17 @@
       <span class="collect-spacer"></span>
       <button id="btnCollectZip" class="btn">⬇ Als ZIP (YOLO)</button>
       <button id="btnCollectClear" class="btn">🗑 Löschen</button>
+    </div>
+  </section>
+
+  <!-- Backup: Historie + Einstellungen sichern/wiederherstellen -->
+  <section class="panel panel--backup">
+    <h2>💾 Daten sichern <span class="subtle">(Historie + Einstellungen als Datei)</span></h2>
+    <p class="panel-hint">Löscht du Browserdaten oder wechselst du das Gerät, geht sonst die ganze Verlaufs-Historie verloren. Ein Backup lässt sich jederzeit wieder einspielen.</p>
+    <div class="collect-row">
+      <button id="btnBackupExport" class="btn">⬇ Backup exportieren</button>
+      <button id="btnBackupImport" class="btn">⬆ Backup einspielen</button>
+      <input id="backupFile" type="file" accept="application/json" hidden />
     </div>
   </section>
 

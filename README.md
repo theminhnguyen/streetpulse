@@ -15,15 +15,17 @@ Fensterdistanz zuverlässig trifft.)
 - **Zählung** pro Kategorie: „jetzt im Bild" und „heute gesamt" – bleibt nach dem Neuladen erhalten
 - **Zähllinie mit Richtung**: zählt Objekte beim Überqueren, getrennt nach Fahrtrichtung
 - **Beobachtungs-Zone**: nur einen gewählten Bildbereich auswerten (z. B. nur die Straße)
-- **Geschwindigkeits­schätzung** bewegter Fahrzeuge – grob per Schieberegler **oder präzise per 2-Punkt-Kalibrierung** (Strecke mit bekannter realer Länge), mit **Maßstab direkt im Bild**
+- **Geschwindigkeits­schätzung** bewegter Fahrzeuge – grob per Schieberegler, **per 2-Punkt-Kalibrierung** (Strecke mit bekannter realer Länge) oder **präzise per Tempo-Gate** (zwei Linien mit bekanntem Abstand, „Lichtschranken-Prinzip" – perspektiv-unabhängig)
 - **Tempo-Statistik**: Durchschnitt, **85 %-Wert** (Standard der Verkehrsplanung), Spitze, Anteil über einem Tempolimit und ein Geschwindigkeits-Histogramm
 - **Verlaufs-Diagramm** (letzte 60 s), **Tagesverlauf** (pro Stunde) und **mehrtägiger Verlauf** (bis zu 14 Tage)
+- **Abdeckungsgrad**: zeigt, wie viel Prozent des bisherigen Tages tatsächlich beobachtet wurden – wichtig, um Vergleiche richtig einzuordnen
 - **Report als Bild (PNG)** mit allen Kennzahlen und Diagrammen – zum Teilen (z. B. mit Stadt/Nachbarschaft)
+- **Backup-Export/-Import**: Historie und Einstellungen als Datei sichern und wiederherstellen
 - **Alarm** bei bestimmten Objekten oder ab einem Tempo – mit Ton und automatischem **Schnappschuss**
 - **Genauigkeits-Umschalter** (schnelles oder genaueres Erkennungsmodell)
-- **Ereignis-Log** und **CSV-Export** (inklusive Richtung)
+- **Ereignis-Log** und **CSV-Export** (inklusive Richtung und Messmethode)
 - **Automatische Pause**, wenn der Browser-Tab in den Hintergrund wechselt
-- Einstellungen, Zone/Linie/Kalibrierung und mehrtägige Statistik werden lokal gespeichert (localStorage)
+- Einstellungen lokal gespeichert (localStorage); die **Tages-Historie liegt in IndexedDB** (robuster, kein Größenlimit wie bei localStorage) – ideal für Dauerbetrieb über mehrere Tage
 
 ## 🚀 Nutzung
 
@@ -39,9 +41,14 @@ Fensterdistanz zuverlässig trifft.)
    - **╱ Zähllinie** über die Straße ziehen, um Überquerungen nach Richtung zu zählen.
    - **📏 Kalibrieren** – eine Strecke mit bekannter Länge markieren (z. B. ein
      geparktes Auto ≈ 4,5 m) für belastbarere km/h-Werte.
+   - **⏱ Tempo-Gate** – zwei Linien mit bekanntem realem Abstand ziehen (z. B.
+     10–20 m); die App misst dann die Zeit dazwischen und errechnet ein
+     präzises, perspektiv-unabhängiges Tempo (🎯-Symbol im Bild und Log).
    - **🔔 Alarm** einstellen, um bei bestimmten Objekten oder ab einem Tempo ein
      Ton-Signal und einen Schnappschuss auszulösen.
 6. Über **📄 Report** ein teilbares Bild mit allen Zahlen und Diagrammen erzeugen.
+7. Regelmäßig über **💾 Daten sichern** ein Backup herunterladen – besonders
+   wichtig, wenn die App über mehrere Tage läuft.
 
 > Der Kamerazugriff im Browser funktioniert nur über **HTTPS** (oder `localhost`).
 > Bei GitHub Pages ist HTTPS automatisch gegeben.
@@ -58,8 +65,13 @@ Fensterdistanz zuverlässig trifft.)
 
 ## ⚠️ Grenzen (bitte beachten)
 
-- **Geschwindigkeit** ist nur eine **grobe Schätzung**. Sie hängt stark vom
-  Kamerawinkel und der Kalibrierung ab und ersetzt keine echte Messung.
+- **Geschwindigkeit** ist ohne Tempo-Gate nur eine **grobe Schätzung** und hängt
+  vom Kamerawinkel ab. Mit **Tempo-Gate** (zwei Linien, bekannter Abstand) ist
+  sie deutlich belastbarer – ersetzt aber weiterhin keine geeichte Messung und
+  hat keine rechtliche Beweiskraft.
+- **Abdeckungsgrad**: Läuft die App nicht durchgehend (Tab geschlossen, Rechner
+  im Schlaf), entstehen Lücken. Der Abdeckungsgrad zeigt das ehrlich an, statt
+  Vergleiche unbemerkt zu verfälschen.
 - **Fahrräder, Roller, Busse und Tiere** wurden vom Modell aus typischer
   Fensterdistanz kaum erkannt und sind deshalb ausgeblendet. Für eigene Klassen
   (z. B. E-Scooter) gibt es die Funktion **„Trainingsdaten sammeln"** als

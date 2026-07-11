@@ -62,6 +62,9 @@ const els = {
   btnAutoCalib: $("btnAutoCalib"), btnTheme: $("btnTheme"),
   btnCollect: $("btnCollect"), collectInterval: $("collectInterval"), collectCount: $("collectCount"),
   btnCollectZip: $("btnCollectZip"), btnCollectClear: $("btnCollectClear"),
+  btnGate: $("btnGate"), btnGateClear: $("btnGateClear"),
+  coverageBadge: $("coverageBadge"), btnBackupExport: $("btnBackupExport"), btnBackupImport: $("btnBackupImport"),
+  backupFile: $("backupFile"),
 };
 
 /* ---- Theme (hell/dunkel) --------------------------------------------- */
@@ -115,6 +118,10 @@ let calibShowUntil = 0;
 let calibHideTimer = null;
 // 2-Punkt-Kalibrierung (präzise): {x1,y1,x2,y2 normalisiert, meters} oder null
 let calib = storage.get("calib", null);
+// Tempo-Gate: zwei Linien mit bekanntem Abstand ("Lichtschranken-Prinzip"),
+// perspektiv-unabhängige Tempo-Messung. {l1:{x1..y2}, l2:{...}, meters} oder null.
+let speedGate = storage.get("speedGate", null);
+let speedGateDraft = null; // erste Linie, während die zweite gezogen wird
 
 // Meter pro Bild-Pixel – aus 2-Punkt-Kalibrierung, sonst aus dem Slider.
 function metersPerPixel() {
@@ -135,26 +142,39 @@ function dateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function freshDay(date) {
-  return { date, hourly: Array.from({ length: 24 }, () => ({})), totals: {}, speeds: [] };
+  return { date, hourly: Array.from({ length: 24 }, () => ({})), totals: {}, speeds: [], coverageMs: Array(24).fill(0) };
 }
-function loadDays() {
-  let d = storage.get("days", null);
-  if (!d || typeof d !== "object") {
-    // Migration vom früheren Einzeltag-Format
-    const old = storage.get("day", null);
-    d = {};
-    if (old && old.date) d[old.date] = { date: old.date, hourly: old.hourly, totals: old.totals, speeds: old.speeds || [] };
+// Lädt die Tagesstatistik aus IndexedDB (robust, kein Größenlimit wie localStorage).
+// Migriert bei Bedarf einmalig aus dem alten localStorage-Format.
+async function loadDaysAsync() {
+  try {
+    const fromIdb = await kvGet("days");
+    if (fromIdb && typeof fromIdb === "object") return fromIdb;
+  } catch (e) { console.error("Tagesdaten aus IndexedDB laden fehlgeschlagen:", e); }
+
+  const oldMulti = storage.get("days", null);
+  if (oldMulti && typeof oldMulti === "object") {
+    await kvSet("days", oldMulti).catch(() => {});
+    storage.remove("days");
+    return oldMulti;
   }
-  return d;
+  const oldSingle = storage.get("day", null); // sehr frühes Einzeltag-Format
+  if (oldSingle && oldSingle.date) {
+    const migrated = { [oldSingle.date]: { date: oldSingle.date, hourly: oldSingle.hourly, totals: oldSingle.totals, speeds: oldSingle.speeds || [] } };
+    await kvSet("days", migrated).catch(() => {});
+    storage.remove("day");
+    return migrated;
+  }
+  return {};
 }
-let days = loadDays();
-let daySaveTimer = null;
+let days = {}; // wird in init() asynchron aus IndexedDB befüllt (siehe loadDaysAsync)
 
 // Liefert (und erstellt bei Bedarf) den Datensatz des heutigen Tages.
 function currentDay() {
   const t = dateStr(new Date());
   if (!days[t] || !Array.isArray(days[t].hourly) || days[t].hourly.length !== 24) days[t] = freshDay(t);
   if (!Array.isArray(days[t].speeds)) days[t].speeds = [];
+  if (!Array.isArray(days[t].coverageMs) || days[t].coverageMs.length !== 24) days[t].coverageMs = Array(24).fill(0);
   days[t].date = t; // immer sicherstellen (auch bei migrierten Einträgen)
   return days[t];
 }
@@ -162,9 +182,16 @@ function pruneDays() {
   const keys = Object.keys(days).sort();
   while (keys.length > KEEP_DAYS) delete days[keys.shift()];
 }
-function scheduleDaySave() {
-  clearTimeout(daySaveTimer);
-  daySaveTimer = setTimeout(() => { pruneDays(); storage.set("days", days); }, 1500);
+// "Dirty flag" statt Debounce: bei Dauerbetrieb (z.B. jede Sekunde ein Coverage-Tick)
+// würde ein reiner Debounce das Speichern endlos hinauszögern. Ein periodischer
+// Checkpoint (siehe flushDaySaveIfDirty) speichert stattdessen spätestens alle paar Sekunden.
+let daysDirty = false;
+function scheduleDaySave() { daysDirty = true; }
+function flushDaySaveIfDirty() {
+  if (!daysDirty) return;
+  daysDirty = false;
+  pruneDays();
+  kvSet("days", days).catch((e) => console.error("Tagesdaten speichern fehlgeschlagen:", e));
 }
 function addToDay(key, speed) {
   const d = currentDay();
@@ -363,6 +390,7 @@ function processDetections(predictions, now, dt) {
 
   const tracks = tracker.update(dets, now);
   if (line) checkLineCrossings(tracks); // Zähllinie auswerten
+  if (speedGate) checkSpeedGate(tracks, now); // präzise Tempo-Gate-Messung
 
   // Live-Zählung aus aktiven Tracks.
   liveCounts = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, 0]));
@@ -429,7 +457,7 @@ function drawOverlay(tracks) {
 
     let label = `${cat.emoji} ${cat.singular}`;
     if (cat.vehicle && t.speedKmh != null && t.speedKmh >= 3) {
-      label += `  ${Math.round(t.speedKmh)} km/h`;
+      label += `  ${t.speedPrecise ? "🎯" : "~"}${Math.round(t.speedKmh)} km/h`;
     }
     octx.font = "600 13px -apple-system, system-ui, sans-serif";
     const tw = octx.measureText(label).width;
@@ -440,9 +468,10 @@ function drawOverlay(tracks) {
     octx.fillText(label, x + 5, ly + 3);
   }
 
-  // Zone-Rahmen, Zähllinie, Kalibrier-Referenz und Maßstab oben drauf.
+  // Zone-Rahmen, Zähllinie, Tempo-Gate, Kalibrier-Referenz und Maßstab oben drauf.
   drawZoneOutline(m);
   drawLine(m);
+  drawGate(m);
   drawCalibLine(m);
   drawCalibrationScale(m);
 }
@@ -541,6 +570,44 @@ function drawCalibLine(m) {
   }
 }
 
+// Tempo-Gate: zwei Linien mit bekanntem Abstand ("Lichtschranke").
+function drawGate(m) {
+  const drawOneLine = (l, dashed) => {
+    const a = normToCanvas(l.x1, l.y1, m), b = normToCanvas(l.x2, l.y2, m);
+    octx.strokeStyle = "#a78bfa";
+    octx.lineWidth = 3;
+    octx.setLineDash(dashed ? [6, 5] : []);
+    octx.beginPath(); octx.moveTo(a.x, a.y); octx.lineTo(b.x, b.y); octx.stroke();
+    octx.setLineDash([]);
+    octx.fillStyle = "#a78bfa";
+    for (const p of [a, b]) { octx.beginPath(); octx.arc(p.x, p.y, 4, 0, Math.PI * 2); octx.fill(); }
+  };
+
+  if (editMode === "gate2" && speedGateDraft) {
+    drawOneLine(speedGateDraft, false); // erste Linie schon fixiert
+    if (dragStart && dragCurrent) {
+      drawOneLine({ x1: dragStart.nx, y1: dragStart.ny, x2: dragCurrent.nx, y2: dragCurrent.ny }, true);
+    }
+    return;
+  }
+  if (!speedGate) return;
+  drawOneLine(speedGate.l1, false);
+  drawOneLine(speedGate.l2, false);
+  const mid1 = normToCanvas((speedGate.l1.x1 + speedGate.l1.x2) / 2, (speedGate.l1.y1 + speedGate.l1.y2) / 2, m);
+  const mid2 = normToCanvas((speedGate.l2.x1 + speedGate.l2.x2) / 2, (speedGate.l2.y1 + speedGate.l2.y2) / 2, m);
+  const mx = (mid1.x + mid2.x) / 2, my = (mid1.y + mid2.y) / 2;
+  const label = `⏱ Tempo-Gate · ${speedGate.meters} m`;
+  octx.font = "600 13px -apple-system, system-ui, sans-serif";
+  octx.textAlign = "center";
+  octx.textBaseline = "middle";
+  const tw = octx.measureText(label).width;
+  octx.fillStyle = "rgba(8,17,28,0.85)";
+  octx.fillRect(mx - tw / 2 - 6, my - 10, tw + 12, 20);
+  octx.fillStyle = "#a78bfa";
+  octx.fillText(label, mx, my);
+  octx.textAlign = "left"; octx.textBaseline = "top";
+}
+
 // Maßstab am unteren Bildrand: zeigt, welche reale Breite die Bildbreite meint
 // (Grundlage der Tempo-Schätzung). Nach dem Verstellen kurz hervorgehoben.
 function drawCalibrationScale(m) {
@@ -595,7 +662,9 @@ function setEditMode(mode) {
   els.toolHint.textContent =
     mode === "zone" ? "Ziehe ein Rechteck über den Bereich, der beobachtet werden soll." :
     mode === "line" ? "Ziehe eine Linie über die Straße – gezählt wird beim Überqueren." :
-    mode === "calib" ? "Ziehe eine Linie über eine Strecke mit bekannter realer Länge." : "";
+    mode === "calib" ? "Ziehe eine Linie über eine Strecke mit bekannter realer Länge." :
+    mode === "gate1" ? "Tempo-Gate: Ziehe die erste Linie quer über die Straße." :
+    mode === "gate2" ? "Jetzt die zweite Linie ziehen – parallel zur ersten, weiter die Straße runter." : "";
   els.toolHint.hidden = !mode;
   updateToolButtons();
 }
@@ -607,9 +676,13 @@ function updateToolButtons() {
   els.btnLine.classList.toggle("has-shape", !!line && editMode !== "line");
   els.btnCalib.classList.toggle("is-active", editMode === "calib");
   els.btnCalib.classList.toggle("has-shape", !!calib && editMode !== "calib");
+  const gateEditing = editMode === "gate1" || editMode === "gate2";
+  els.btnGate.classList.toggle("is-active", gateEditing);
+  els.btnGate.classList.toggle("has-shape", !!speedGate && !gateEditing);
   els.btnZoneClear.hidden = !zone;
   els.btnLineClear.hidden = !line;
   els.btnCalibClear.hidden = !calib;
+  els.btnGateClear.hidden = !speedGate;
 }
 
 function onPointerDown(e) {
@@ -650,6 +723,30 @@ function onPointerUp(e) {
         storage.set("calib", calib);
       }
     }
+  } else if (editMode === "gate1") {
+    // Erste Linie des Tempo-Gates: nur merken, direkt zur zweiten Linie weiterleiten.
+    if (Math.hypot(end.nx - dragStart.nx, end.ny - dragStart.ny) > 0.03) {
+      speedGateDraft = { x1: dragStart.nx, y1: dragStart.ny, x2: end.nx, y2: end.ny };
+      dragStart = dragCurrent = null;
+      setEditMode("gate2");
+      drawOverlay(lastTracks);
+      return; // Zeichenmodus bewusst NICHT verlassen – zweite Linie folgt sofort.
+    }
+  } else if (editMode === "gate2") {
+    if (Math.hypot(end.nx - dragStart.nx, end.ny - dragStart.ny) > 0.03 && speedGateDraft) {
+      const input = prompt(
+        "Wie weit sind die beiden Linien in der Realität voneinander entfernt? (in Metern)\n" +
+        "Je größer der Abstand, desto genauer die Messung – z. B. 10–20 m.",
+        "10"
+      );
+      const meters = parseFloat((input || "").replace(",", "."));
+      if (meters > 0) {
+        speedGate = { l1: speedGateDraft, l2: { x1: dragStart.nx, y1: dragStart.ny, x2: end.nx, y2: end.ny }, meters };
+        storage.set("speedGate", speedGate);
+        resetGateSides();
+      }
+    }
+    speedGateDraft = null;
   }
   dragStart = dragCurrent = null;
   setEditMode(null);        // nach dem Ziehen Zeichenmodus verlassen
@@ -701,10 +798,12 @@ function updateStats(tracks) {
 
 /* ---- 10. Zählen + loggen --------------------------------------------- */
 // Grobe km/h eines Fahrzeug-Tracks (oder null bei Personen/Tieren/Stillstand).
+// Bei aktivem Tempo-Gate wird hier bewusst nichts geloggt – die präzise
+// Messung übernimmt recordGateSpeed(), sobald das Fahrzeug beide Linien quert.
 function trackSpeed(track) {
   const cat = CATEGORIES[track.class];
-  return cat.vehicle && track.speedKmh != null && track.speedKmh >= 3
-    ? Math.round(track.speedKmh) : null;
+  if (!cat.vehicle || speedGate) return null;
+  return track.speedKmh != null && track.speedKmh >= 3 ? Math.round(track.speedKmh) : null;
 }
 
 // Vom Tracker aufgerufen, sobald ein Objekt bestätigt ist.
@@ -732,7 +831,7 @@ function registerCount(key, speed, direction) {
   checkAlarm(key, speed);
 }
 
-function addLogEntry(cat, speed, direction) {
+function addLogEntry(cat, speed, direction, precise) {
   // "Log ist leer"-Platzhalter entfernen.
   const empty = els.log.querySelector(".log-empty");
   if (empty) empty.remove();
@@ -742,23 +841,28 @@ function addLogEntry(cat, speed, direction) {
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
   const ss = String(now.getSeconds()).padStart(2, "0");
-  const arrow = direction ? directionArrows()[direction] + " " : "";
+  const arrow = direction ? directionArrows()[direction] + " " : precise ? "🎯 " : "";
+  const speedText = speed ? ` · ${precise ? "" : "~"}${speed} km/h` : "";
   li.innerHTML = `
     <span class="log-time">${hh}:${mm}:${ss}</span>
     <span class="log-emoji">${cat.emoji}</span>
-    <span class="log-text">${arrow}${cat.singular}${speed ? ` · ~${speed} km/h` : ""}</span>`;
+    <span class="log-text">${arrow}${cat.singular}${speedText}</span>`;
   els.log.prepend(li);
   while (els.log.children.length > 60) els.log.lastChild.remove();
 }
 
 /* ---- 10b. Zähllinie: Überquerungen + Richtung ------------------------ */
+// Auf welcher Seite einer Linie liegt ein Punkt? (>0 / <0 / genau auf der Linie = 0)
+function lineSide(ln, nx, ny) {
+  const dx = ln.x2 - ln.x1, dy = ln.y2 - ln.y1;
+  return Math.sign(dx * (ny - ln.y1) - dy * (nx - ln.x1));
+}
+
 function checkLineCrossings(tracks) {
-  const dx = line.x2 - line.x1, dy = line.y2 - line.y1;
   for (const t of tracks) {
     const nx = (t.bbox[0] + t.bbox[2] / 2) / video.videoWidth;
     const ny = (t.bbox[1] + t.bbox[3] / 2) / video.videoHeight;
-    // Vorzeichen = auf welcher Seite der Linie liegt das Objekt?
-    const side = Math.sign(dx * (ny - line.y1) - dy * (nx - line.x1));
+    const side = lineSide(line, nx, ny);
     if (side === 0) continue;                       // genau auf der Linie -> abwarten
     if (t._lineSide === undefined) { t._lineSide = side; continue; }
     if (side !== t._lineSide) {                      // Seitenwechsel = Überquerung
@@ -771,6 +875,64 @@ function checkLineCrossings(tracks) {
 
 function resetLineSides() {
   for (const t of tracker.getTracks()) delete t._lineSide;
+}
+
+/* ---- 10b2. Tempo-Gate: präzise Messung über zwei Linien --------------- */
+// "Lichtschranken-Prinzip": Zeit zwischen dem Überqueren zweier Linien mit
+// bekanntem realem Abstand -> perspektiv-unabhängiges, präzises Tempo.
+function checkSpeedGate(tracks, now) {
+  if (!speedGate) return;
+  for (const t of tracks) {
+    if (t._gateDone) continue;
+    const nx = (t.bbox[0] + t.bbox[2] / 2) / video.videoWidth;
+    const ny = (t.bbox[1] + t.bbox[3] / 2) / video.videoHeight;
+    const s1 = lineSide(speedGate.l1, nx, ny);
+    const s2 = lineSide(speedGate.l2, nx, ny);
+
+    if (s1 !== 0) {
+      if (t._g1Side === undefined) t._g1Side = s1;
+      else if (s1 !== t._g1Side && t._g1Ts == null) t._g1Ts = now;
+      t._g1Side = s1;
+    }
+    if (s2 !== 0) {
+      if (t._g2Side === undefined) t._g2Side = s2;
+      else if (s2 !== t._g2Side && t._g2Ts == null) t._g2Ts = now;
+      t._g2Side = s2;
+    }
+
+    if (t._g1Ts != null && t._g2Ts != null) {
+      t._gateDone = true;
+      const dtSec = Math.abs(t._g2Ts - t._g1Ts) / 1000;
+      // Plausibilitätsgrenzen: zu kurz = Messrauschen, zu lang = kein durchgehender Weg.
+      if (dtSec >= 0.08 && dtSec <= 20) {
+        const kmh = Math.round((speedGate.meters / dtSec) * 3.6);
+        if (kmh >= 2 && kmh <= 250) recordGateSpeed(t, kmh);
+      }
+    }
+  }
+}
+
+function resetGateSides() {
+  for (const t of tracker.getTracks()) {
+    delete t._g1Side; delete t._g2Side; delete t._g1Ts; delete t._g2Ts; delete t._gateDone;
+  }
+}
+
+// Präzise Tempo-Gate-Messung verbuchen: überschreibt den groben Live-Wert,
+// fließt in die Tempo-Statistik ein und wird geloggt (ohne erneute Zählung –
+// das Objekt wurde bereits regulär gezählt).
+function recordGateSpeed(track, kmh) {
+  track.speedKmh = kmh;
+  track.speedPrecise = true;
+  const d = currentDay();
+  if (d.speeds.length < MAX_SPEEDS_PER_DAY) d.speeds.push(kmh);
+  scheduleDaySave();
+  const secs = observationMs() / 1000;
+  logRows.push({ time: new Date(), secs, key: track.class, speed: kmh, dir: null, gate: true });
+  if (logRows.length > MAX_LOG_ROWS) logRows.shift();
+  addLogEntry(CATEGORIES[track.class], kmh, null, true);
+  drawSpeedStats();
+  checkAlarm(track.class, kmh);
 }
 
 // Pfeil-Symbole passend zur Linien-Ausrichtung (a = Bewegung von Seite − nach +).
@@ -1113,7 +1275,8 @@ function drawSpeedStats() {
   els.spdMax.textContent = st ? st.max : "–";
   els.spdOver.textContent = st ? st.overPct + "%" : "–";
   els.spdHint.textContent = st
-    ? "85 %-Wert = Tempo, das 85 % nicht überschreiten (Standard der Verkehrsplanung)"
+    ? (speedGate ? "🎯 Präzise gemessen per Tempo-Gate. " : "") +
+      "85 %-Wert = Tempo, das 85 % nicht überschreiten (Standard der Verkehrsplanung)"
     : "Noch keine Tempo-Daten – Fahrzeuge müssen sich sichtbar bewegen.";
   drawSpeedHistogram(st);
 }
@@ -1286,6 +1449,10 @@ function generateSummaryText() {
     if (st.overPct > 0) p.push(`${st.overPct} % waren schneller als ${st.limit} km/h${st.overPct >= 20 ? " – auffällig viele" : ""}.`);
   }
   if (ins.rushHours.length) p.push(`Typische Stoßzeiten laut Historie: ${ins.rushHours.map((h) => `${h}–${h + 1} Uhr`).join(" und ")}.`);
+  const coverage = coveragePercentToday();
+  if (coverage != null && coverage < 50) {
+    p.push(`Hinweis: Nur ${coverage} % des heutigen Zeitraums wurden bisher beobachtet – Vergleiche sind dadurch unsicherer.`);
+  }
   return { text: p.join(" "), anomaly: ins.anomaly };
 }
 
@@ -1348,29 +1515,37 @@ function showToolHint(text, ms) {
   if (ms) toolHintTimer = setTimeout(() => { if (!editMode) els.toolHint.hidden = true; }, ms);
 }
 
-/* ---- 11h. Trainingsdaten sammeln (IndexedDB + YOLO-Export) ---------- */
+/* ---- 11h. IndexedDB: Trainingsbilder (frames) + Tagesstatistik (kv) -- */
+// Version 2: "kv" kam nachträglich dazu (für die Tagesstatistik, robuster als
+// localStorage). Bestehende "frames" (Trainingsbilder) bleiben beim Upgrade erhalten.
 let _idb = null;
 function idbOpen() {
   return new Promise((resolve, reject) => {
     if (_idb) return resolve(_idb);
-    const req = indexedDB.open("streetpulse-frames", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("frames", { keyPath: "id", autoIncrement: true });
+    const req = indexedDB.open("streetpulse-frames", 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("frames")) db.createObjectStore("frames", { keyPath: "id", autoIncrement: true });
+      if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
+    };
     req.onsuccess = () => { _idb = req.result; resolve(_idb); };
     req.onerror = () => reject(req.error);
   });
 }
-function idbTx(mode, fn) {
+function idbTx(store, mode, fn) {
   return idbOpen().then((db) => new Promise((res, rej) => {
-    const tx = db.transaction("frames", mode);
-    const r = fn(tx.objectStore("frames"));
+    const tx = db.transaction(store, mode);
+    const r = fn(tx.objectStore(store));
     tx.oncomplete = () => res(r ? r.result : undefined);
     tx.onerror = () => rej(tx.error);
   }));
 }
-const idbAdd = (obj) => idbTx("readwrite", (s) => s.add(obj));
-const idbGetAll = () => idbTx("readonly", (s) => s.getAll());
-const idbCount = () => idbTx("readonly", (s) => s.count());
-const idbClear = () => idbTx("readwrite", (s) => s.clear());
+const idbAdd = (obj) => idbTx("frames", "readwrite", (s) => s.add(obj));
+const idbGetAll = () => idbTx("frames", "readonly", (s) => s.getAll());
+const idbCount = () => idbTx("frames", "readonly", (s) => s.count());
+const idbClear = () => idbTx("frames", "readwrite", (s) => s.clear());
+const kvGet = (key) => idbTx("kv", "readonly", (s) => s.get(key));
+const kvSet = (key, value) => idbTx("kv", "readwrite", (s) => s.put(value, key));
 
 let collecting = false;
 let lastCollectTs = 0;
@@ -1447,7 +1622,9 @@ function generateReport() {
   x.fillStyle = "#4f9dff"; x.font = "700 32px -apple-system, system-ui, sans-serif";
   x.fillText("StreetPulse – Verkehrs-Report", P, 34);
   x.fillStyle = "#93a1b3"; x.font = "15px -apple-system, system-ui, sans-serif";
-  x.fillText(`Erstellt am ${new Date().toLocaleString("de-DE")}  ·  Beobachtungstag: ${d.date}`, P, 76);
+  const covPct = coveragePercentToday();
+  const covText = covPct != null ? `  ·  Abdeckung heute: ${covPct} %` : "";
+  x.fillText(`Erstellt am ${new Date().toLocaleString("de-DE")}  ·  Beobachtungstag: ${d.date}${covText}`, P, 76);
 
   // Zusammenfassung in Klartext (umbrochen)
   x.fillStyle = "#c8d3e0"; x.font = "15px -apple-system, system-ui, sans-serif";
@@ -1487,7 +1664,8 @@ function generateReport() {
   y += Math.ceil(CATEGORY_KEYS.length / cols) * (66 + gap) + 12;
 
   // Tempo-Statistik
-  y = header("Geschwindigkeit" + (calib ? " (2-Punkt-kalibriert)" : " (grobe Schätzung)"), y);
+  const speedPrecisionLabel = speedGate ? " (Tempo-Gate, präzise)" : calib ? " (2-Punkt-kalibriert)" : " (grobe Schätzung)";
+  y = header("Geschwindigkeit" + speedPrecisionLabel, y);
   if (st) {
     const items = [
       [st.count, "Fahrzeuge"], [st.avg + " km/h", "Ø-Tempo"], [st.p85 + " km/h", "85 %-Wert"],
@@ -1535,11 +1713,14 @@ function exportCsv() {
     lines.push(`# Zähllinie Richtung A gesamt;${sum(dirTotals.a)}`);
     lines.push(`# Zähllinie Richtung B gesamt;${sum(dirTotals.b)}`);
   }
+  lines.push(`# Tempo-Messmethode;${speedGate ? "Tempo-Gate (präzise, " + speedGate.meters + " m)" : calib ? "2-Punkt-Kalibrierung" : "grobe Schätzung (Straßenbreite)"}`);
+  const covPctCsv = coveragePercentToday();
+  if (covPctCsv != null) lines.push(`# Abdeckung heute;${covPctCsv}%`);
   lines.push("");
-  lines.push("Uhrzeit;Sekunde_seit_Start;Kategorie;Tempo_kmh;Richtung");
+  lines.push("Uhrzeit;Sekunde_seit_Start;Kategorie;Tempo_kmh;Praezise;Richtung");
   for (const row of logRows) {
     const t = row.time.toLocaleTimeString("de-DE");
-    lines.push(`${t};${row.secs.toFixed(1)};${CATEGORIES[row.key].label};${row.speed ?? ""};${row.dir ? row.dir.toUpperCase() : ""}`);
+    lines.push(`${t};${row.secs.toFixed(1)};${CATEGORIES[row.key].label};${row.speed ?? ""};${row.gate ? "ja" : ""};${row.dir ? row.dir.toUpperCase() : ""}`);
   }
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -1549,6 +1730,57 @@ function exportCsv() {
   a.download = `streetpulse_${stamp}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* ---- 12b. Backup: alle Einstellungen + Historie als JSON-Datei ------- */
+// Wichtig für Dauerbetrieb: löscht der Browser seine Daten (oder wechselt man
+// das Gerät), sind sonst die komplette Historie und alle Einstellungen weg.
+function exportBackup() {
+  const backup = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    config: {
+      zone, line, calib, speedGate, alarmSettings, schedule, theme,
+      modelBase, speedLimit: Number(els.speedLimit.value) || 50,
+    },
+    days,
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `streetpulse-backup_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function importBackupFile(file) {
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!data || typeof data !== "object" || typeof data.days !== "object") {
+      throw new Error("Das ist keine gültige StreetPulse-Backup-Datei.");
+    }
+    const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString("de-DE") : "unbekanntem Zeitpunkt";
+    if (!confirm(`Backup vom ${when} einspielen?\nDas überschreibt die aktuelle Historie und alle Einstellungen.`)) return;
+
+    days = data.days || {};
+    await kvSet("days", days);
+    const c = data.config || {};
+    if (c.zone !== undefined) storage.set("zone", c.zone);
+    if (c.line !== undefined) storage.set("line", c.line);
+    if (c.calib !== undefined) storage.set("calib", c.calib);
+    if (c.speedGate !== undefined) storage.set("speedGate", c.speedGate);
+    if (c.alarmSettings) storage.set("alarm", c.alarmSettings);
+    if (c.schedule) storage.set("schedule", c.schedule);
+    if (c.theme) storage.set("theme", c.theme);
+    if (c.modelBase) storage.set("modelBase", c.modelBase);
+    if (c.speedLimit) storage.set("speedLimit", c.speedLimit);
+
+    alert("Backup eingespielt. Die Seite wird jetzt neu geladen.");
+    location.reload();
+  } catch (e) {
+    alert("Backup konnte nicht eingespielt werden: " + e.message);
+  }
 }
 
 /* ---- 13. Steuerung / Events ------------------------------------------ */
@@ -1579,8 +1811,10 @@ function resetCounts() {
   tracker.reset();
   dirTotals = { a: {}, b: {} };
   resetLineSides();
+  resetGateSides();
   days[dateStr(new Date())] = freshDay(dateStr(new Date())); // nur heute verwerfen
-  storage.set("days", days);
+  scheduleDaySave();
+  flushDaySaveIfDirty();
   obsAccumMs = 0;
   obsStart = (running && !paused) ? performance.now() : 0;
   els.log.innerHTML = `<li class="log-empty">Noch keine Ereignisse …</li>`;
@@ -1590,6 +1824,7 @@ function resetCounts() {
   drawDayChart();
   drawWeekChart();
   drawSpeedStats();
+  updateCoverageBadge();
 }
 
 function setStatus(text, kind) {
@@ -1602,6 +1837,35 @@ function updateRuntime() {
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
   const ss = String(secs % 60).padStart(2, "0");
   els.runtimeMeter.textContent = `Laufzeit ${mm}:${ss}`;
+}
+
+/* ---- Abdeckungsgrad: wie viel vom bisherigen Tag wurde beobachtet? --- */
+// Wird jede Sekunde aufgerufen; zählt nur, während aktiv beobachtet wird
+// (kein Zählen bei Pause) – ergibt eine minutengenaue Abdeckung pro Stunde.
+function updateCoverage() {
+  if (!running || paused) return;
+  const d = currentDay();
+  const h = new Date().getHours();
+  d.coverageMs[h] = (d.coverageMs[h] || 0) + 1000;
+  scheduleDaySave();
+  updateCoverageBadge();
+}
+
+// Anteil des bisherigen Tages (seit Mitternacht), der beobachtet wurde.
+function coveragePercentToday() {
+  const d = currentDay();
+  const now = new Date();
+  const elapsedMs = now.getHours() * 3600000 + now.getMinutes() * 60000 + now.getSeconds() * 1000;
+  if (elapsedMs <= 0) return null;
+  const observedMs = d.coverageMs.reduce((s, v) => s + v, 0);
+  return Math.min(100, Math.round((observedMs / elapsedMs) * 100));
+}
+
+function updateCoverageBadge() {
+  const pct = coveragePercentToday();
+  if (pct == null) { els.coverageBadge.textContent = ""; return; }
+  els.coverageBadge.textContent = `👁 Abdeckung heute: ${pct}% des bisherigen Tages beobachtet`;
+  els.coverageBadge.classList.toggle("coverage-low", pct < 50);
 }
 
 function bindEvents() {
@@ -1617,6 +1881,12 @@ function bindEvents() {
   els.modelSelect.addEventListener("change", (e) => switchModel(e.target.value));
   els.btnDayClear.addEventListener("click", resetCounts);
   els.btnReport.addEventListener("click", generateReport);
+  els.btnBackupExport.addEventListener("click", exportBackup);
+  els.btnBackupImport.addEventListener("click", () => els.backupFile.click());
+  els.backupFile.addEventListener("change", (e) => {
+    if (e.target.files[0]) importBackupFile(e.target.files[0]);
+    e.target.value = ""; // erlaubt erneutes Auswählen derselben Datei
+  });
   els.speedLimit.addEventListener("change", () => {
     storage.set("speedLimit", Number(els.speedLimit.value) || 50);
     drawSpeedStats();
@@ -1656,6 +1926,15 @@ function bindEvents() {
   els.btnCalib.addEventListener("click", () => setEditMode(editMode === "calib" ? null : "calib"));
   els.btnCalibClear.addEventListener("click", () => {
     calib = null; storage.remove("calib"); updateToolButtons(); drawOverlay(lastTracks);
+  });
+  els.btnGate.addEventListener("click", () => {
+    const active = editMode === "gate1" || editMode === "gate2";
+    speedGateDraft = null;
+    setEditMode(active ? null : "gate1");
+  });
+  els.btnGateClear.addEventListener("click", () => {
+    speedGate = null; storage.remove("speedGate"); resetGateSides();
+    updateToolButtons(); drawSpeedStats(); drawOverlay(lastTracks);
   });
   els.btnAutoCalib.addEventListener("click", startAutoCalib);
   els.btnSummary.addEventListener("click", updateSummary);
@@ -1697,7 +1976,7 @@ function bindEvents() {
 }
 
 /* ---- 14. Start -------------------------------------------------------- */
-function init() {
+async function init() {
   buildStatCards();
   bindEvents();
   els.modelSelect.value = modelBase;
@@ -1716,6 +1995,9 @@ function init() {
   els.schedFrom.value = schedule.from;
   els.schedTo.value = schedule.to;
   updateSchedStatus();
+
+  // Tagesstatistik aus IndexedDB laden (robust, überlebt Neuladen & Browser-Neustarts).
+  days = await loadDaysAsync();
   // heutige, gespeicherte Zählung in die Anzeige übernehmen (überlebt Reload)
   const dToday = currentDay();
   for (const k of CATEGORY_KEYS) totals[k] = dToday.totals[k] || 0;
@@ -1727,11 +2009,17 @@ function init() {
   applyTheme(); // setzt Theme + zeichnet alle Diagramme mit den passenden Farben
   updateSummary();
   updateCollectCount();
+  updateCoverageBadge();
   setInterval(sampleHistory, 1000);
   setInterval(updateRuntime, 1000);
+  setInterval(updateCoverage, 1000);
   setInterval(checkSchedule, 15000);
   setInterval(updateSummary, 20000);
+  setInterval(flushDaySaveIfDirty, 5000); // Checkpoint statt Debounce (siehe scheduleDaySave)
+  // Best-effort: beim Verlassen/Verstecken der Seite noch offene Änderungen sichern.
+  document.addEventListener("visibilitychange", () => { if (document.hidden) flushDaySaveIfDirty(); });
+  window.addEventListener("pagehide", flushDaySaveIfDirty);
   loadModel();
 }
 
-init();
+init().catch((err) => console.error("Initialisierung fehlgeschlagen:", err));
